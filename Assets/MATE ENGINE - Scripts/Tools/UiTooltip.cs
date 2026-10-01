@@ -79,7 +79,7 @@ public class UiTooltip : MonoBehaviour, IPointerEnterHandler, IPointerExitHandle
     {
         if (selfRT == null || rootCanvas == null) return;
 
-        lastScreenPos = Input.mousePosition;
+        lastScreenPos = MateeInput.MousePosition;
         bool inside = IsInsideExpandedZone(lastScreenPos);
 
         if (inside && !hovering)

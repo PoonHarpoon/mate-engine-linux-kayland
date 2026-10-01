@@ -56,7 +56,10 @@ public class AvatarAnimatorController : MonoBehaviour
 
     void Start()
     {
-        isMutter = WindowManager.Instance.CompositorName.ToLower().Contains("mutter") || WindowManager.Instance.CompositorName.ToLower().Contains("gnome");
+        string compositorName = WindowManager.Instance?.CompositorName ?? string.Empty;
+        isMutter = !WindowManager.IsNativeWaylandSession &&
+                   (compositorName.Contains("mutter", StringComparison.OrdinalIgnoreCase) ||
+                    compositorName.Contains("gnome", StringComparison.OrdinalIgnoreCase));
         borderHidden = SaveLoadHandler.Instance.data.windowType != WindowType.ShowBorder;
     }
 
@@ -165,14 +168,14 @@ public class AvatarAnimatorController : MonoBehaviour
             if (isDancing) SetDancing(false);
             return;
         }
-        if (Input.GetMouseButtonDown(0))
+        if (MateeInput.GetMouseButtonDown(0))
         {
             SetDragging(true);
             mouseHeld = true;
             dragLockTimer = 0.30f;
             SetDancing(false);
         }
-        if (Input.GetMouseButtonUp(0)) mouseHeld = false;
+        if (MateeInput.GetMouseButtonUp(0)) mouseHeld = false;
         if (dragLockTimer > 0f)
         {
             dragLockTimer -= Time.deltaTime;

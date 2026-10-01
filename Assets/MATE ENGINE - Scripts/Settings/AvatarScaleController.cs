@@ -3,6 +3,8 @@ using UnityEngine.UI;
 
 public class AvatarScaleController : MonoBehaviour
 {
+    public const float MinimumAvatarSize = 0.05f;
+
     [Header("UI")]
     [SerializeField] private Slider avatarSizeSlider;
 
@@ -16,6 +18,13 @@ public class AvatarScaleController : MonoBehaviour
     private Transform modelRoot;
     private GameObject currentModel;
     private AvatarAnimatorController controller;
+
+    void Awake()
+    {
+        // Set the range before settings menus load a saved scale into this slider.
+        if (avatarSizeSlider != null)
+            avatarSizeSlider.minValue = MinimumAvatarSize;
+    }
 
     void Start()
     {
@@ -69,11 +78,12 @@ public class AvatarScaleController : MonoBehaviour
             return;
 
 
-        float scroll = Input.mouseScrollDelta.y;
+        float scroll = MateeInput.MouseScrollDelta.y;
         if (scroll != 0f)
         {
+            float step = scrollSensitivity * Mathf.Clamp01(targetSize / 0.5f);
             targetSize = Mathf.Clamp(
-                targetSize + scroll * scrollSensitivity,
+                targetSize + scroll * step,
                 minSize, maxSize
             );
         }

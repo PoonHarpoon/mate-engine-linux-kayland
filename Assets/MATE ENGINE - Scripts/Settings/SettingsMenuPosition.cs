@@ -1,18 +1,17 @@
-using UnityEngine;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using UnityEngine;
 
-
+[DefaultExecutionOrder(100)]
 public class SettingsMenuPosition : MonoBehaviour
 {
     [Serializable]
     public class MenuEntry
     {
         public RectTransform settingsMenu;
-        [HideInInspector] public float originalX;
-        [HideInInspector] public float originalY;
-        [HideInInspector] public Vector2 lastApplied;
+        [NonSerialized] public Vector2 lastApplied;
+        [NonSerialized] public Vector2 lastCorrection;
     }
 
     [Header("Menus to track")]
@@ -21,104 +20,105 @@ public class SettingsMenuPosition : MonoBehaviour
     [Header("Edge margin in Pixels")]
     public float edgeMargin = 50f;
 
-    [Header("Checks per second")]
-    public float checkFPS = 20f;
-
     [Header("Monitor refresh (sec)")]
     public float monitorRefreshInterval = 2f;
 
-    private List<RectInt> monitorRects = new();
-    private float checkTimer;
-    private float monitorTimer;
-    private bool lastAtRightEdge;
-    private bool initedEdge;
+    readonly List<RectInt> monitorRects = new();
+    readonly Vector3[] corners = new Vector3[4];
+    float monitorTimer;
 
     void Start()
     {
-        if (WindowManager.Instance == null)
-        {
-            Debug.LogError("WindowManager.Instance is null. SettingsMenuPosition requires WindowManager to be present.");
-            enabled = false;
-            return;
-        }
-
         RefreshMonitors();
-        foreach (var menu in menus)
-        {
-            if (!menu.settingsMenu) continue;
-            menu.originalX = menu.settingsMenu.anchoredPosition.x;
-            menu.originalY = menu.settingsMenu.anchoredPosition.y;
-            menu.lastApplied = menu.settingsMenu.anchoredPosition;
-        }
-        initedEdge = false;
+        foreach (var entry in menus)
+            if (entry.settingsMenu) entry.lastApplied = entry.settingsMenu.anchoredPosition;
     }
 
-    void Update()
+    void LateUpdate()
     {
-        if (WindowManager.Instance == null || WindowManager.Instance.Display == IntPtr.Zero) return;
+        var manager = WindowManager.Instance;
+        if (manager == null || !manager.TryGetVisiblePetRect(out var visible) || visible.width <= 0 || visible.height <= 0)
+            return;
 
         monitorTimer += Time.unscaledDeltaTime;
         if (monitorTimer >= Mathf.Max(0.1f, monitorRefreshInterval))
         {
-            monitorTimer = 0f;
+            monitorTimer = 0;
             RefreshMonitors();
         }
 
-        checkTimer += Time.unscaledDeltaTime;
-        float step = 1f / Mathf.Max(1f, checkFPS);
-        if (checkTimer < step) return;
-        checkTimer = 0f;
+        RectInt monitor = BestMonitor(visible);
+        float margin = Mathf.Max(0, edgeMargin);
+        float left = Mathf.Max(visible.xMin, monitor.xMin + margin);
+        float right = Mathf.Min(visible.xMax, monitor.xMax - margin);
+        float top = Mathf.Max(visible.yMin, monitor.yMin + margin);
+        float bottom = Mathf.Min(visible.yMax, monitor.yMax - margin);
+        if (right <= left) { left = visible.xMin; right = visible.xMax; }
+        if (bottom <= top) { top = visible.yMin; bottom = visible.yMax; }
+        Rect safeScreen = Rect.MinMaxRect(
+            (left - visible.xMin) * Screen.width / visible.width,
+            (visible.yMax - bottom) * Screen.height / visible.height,
+            (right - visible.xMin) * Screen.width / visible.width,
+            (visible.yMax - top) * Screen.height / visible.height);
 
-        if (!WindowManager.Instance.GetWindowRect(WindowManager.Instance.UnityWindow, out var winRect)) return;
-
-        RectInt screen = monitorRects.Count > 0 ? GetBestMonitor(winRect) : new RectInt(0, 0, Screen.currentResolution.width, Screen.currentResolution.height);
-
-        bool atRightEdge = winRect.x + winRect.width >= (screen.x + screen.width - edgeMargin);
-        if (!initedEdge) { lastAtRightEdge = atRightEdge; initedEdge = true; }
-
-        if (atRightEdge != lastAtRightEdge)
+        foreach (var entry in menus)
         {
-            lastAtRightEdge = atRightEdge;
-            for (int i = 0; i < menus.Count; i++)
+            var rect = entry.settingsMenu;
+            if (!rect || !rect.gameObject.activeInHierarchy || !(rect.parent is RectTransform parent)) continue;
+
+            // A bone follower supplies a fresh position each frame. For a stationary
+            // menu, undo our previous correction before evaluating its new bounds.
+            if ((rect.anchoredPosition - entry.lastApplied).sqrMagnitude < 0.01f)
+                rect.anchoredPosition -= entry.lastCorrection;
+
+            var canvas = rect.GetComponentInParent<Canvas>();
+            Camera uiCamera = canvas != null && canvas.renderMode == RenderMode.ScreenSpaceOverlay
+                ? null : canvas != null && canvas.worldCamera != null ? canvas.worldCamera : Camera.main;
+            rect.GetWorldCorners(corners);
+            float xMin = float.MaxValue, yMin = float.MaxValue, xMax = float.MinValue, yMax = float.MinValue;
+            foreach (var corner in corners)
             {
-                var m = menus[i];
-                if (!m.settingsMenu) continue;
-                Vector2 target = new Vector2(atRightEdge ? -m.originalX : m.originalX, m.originalY);
-                if (m.lastApplied != target)
-                {
-                    m.settingsMenu.anchoredPosition = target;
-                    m.lastApplied = target;
-                }
+                Vector2 point = RectTransformUtility.WorldToScreenPoint(uiCamera, corner);
+                xMin = Mathf.Min(xMin, point.x); xMax = Mathf.Max(xMax, point.x);
+                yMin = Mathf.Min(yMin, point.y); yMax = Mathf.Max(yMax, point.y);
             }
+
+            float dx = Correction(xMin, xMax, safeScreen.xMin, safeScreen.xMax);
+            float dy = Correction(yMin, yMax, safeScreen.yMin, safeScreen.yMax);
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, Vector2.zero, uiCamera, out var localOrigin);
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, new Vector2(dx, dy), uiCamera, out var localTarget);
+            entry.lastCorrection = localTarget - localOrigin;
+            rect.anchoredPosition += entry.lastCorrection;
+            entry.lastApplied = rect.anchoredPosition;
         }
+    }
+
+    static float Correction(float min, float max, float safeMin, float safeMax)
+    {
+        if (max - min > safeMax - safeMin)
+            return (safeMin + safeMax - min - max) * 0.5f;
+        if (min < safeMin) return safeMin - min;
+        if (max > safeMax) return safeMax - max;
+        return 0;
     }
 
     void RefreshMonitors()
     {
+        monitorRects.Clear();
+        if (WindowManager.Instance == null) return;
         WindowManager.Instance.QueryMonitors();
-        monitorRects = WindowManager.Instance.GetAllMonitors().Values.ToList();
+        monitorRects.AddRange(WindowManager.Instance.GetAllMonitors().Values);
     }
 
-    RectInt GetBestMonitor(RectInt win)
+    RectInt BestMonitor(Rect visible)
     {
-        int idx = 0;
-        float maxArea = 0;
-        for (int i = 0; i < monitorRects.Count; i++)
-        {
-            float a = OverlapArea(win, monitorRects[i]);
-            if (a > maxArea) { maxArea = a; idx = i; }
-        }
-        return monitorRects[idx];
+        if (monitorRects.Count == 0)
+            return new RectInt(0, 0, Screen.currentResolution.width, Screen.currentResolution.height);
+        return monitorRects.OrderByDescending(m => Overlap(visible, m))
+            .ThenBy(m => (visible.center - (Vector2)m.center).sqrMagnitude).First();
     }
 
-    int OverlapArea(RectInt a, RectInt b)
-    {
-        int x1 = Mathf.Max(a.x, b.x);
-        int x2 = Mathf.Min(a.x + a.width, b.x + b.width);
-        int y1 = Mathf.Max(a.y, b.y);
-        int y2 = Mathf.Min(a.y + a.height, b.y + b.height);
-        int w = x2 - x1;
-        int h = y2 - y1;
-        return (w > 0 && h > 0) ? w * h : 0;
-    }
+    static float Overlap(Rect a, RectInt b) =>
+        Mathf.Max(0, Mathf.Min(a.xMax, b.xMax) - Mathf.Max(a.xMin, b.xMin)) *
+        Mathf.Max(0, Mathf.Min(a.yMax, b.yMax) - Mathf.Max(a.yMin, b.yMin));
 }

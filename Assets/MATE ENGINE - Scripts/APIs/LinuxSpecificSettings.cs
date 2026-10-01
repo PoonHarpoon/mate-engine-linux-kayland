@@ -57,7 +57,7 @@ public class LinuxSpecificSettings : MonoBehaviour
         {
             Resizable = false,
             WindowPosition = WindowPosition.Center,
-            TransientFor = GtkX11Helper.Instance.DummyParent
+            TransientFor = WindowManager.IsNativeWaylandSession ? null : GtkX11Helper.Instance.DummyParent
         };
         window.SetDefaultSize(783, 554);
         window.Destroyed += (s, e) =>

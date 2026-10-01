@@ -11,6 +11,9 @@ public static class EarlyEnvSet
 {
     [DllImport("libc")]
     private static extern IntPtr setenv(string name, string value, int overwrite);
+
+    [DllImport("libc", EntryPoint = "_exit")]
+    private static extern void ExitImmediately(int status);
     
     [DllImport(WindowManager.LibX11)]
     private static extern int XGetWindowAttributes(IntPtr display, IntPtr window, out WindowManager.XWindowAttributes attributes);
@@ -49,7 +52,39 @@ public static class EarlyEnvSet
         #if UNITY_EDITOR
         return;
         #endif
+        if (string.Equals(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland", StringComparison.OrdinalIgnoreCase) &&
+            !Array.Exists(Environment.GetCommandLineArgs(), arg => string.Equals(arg, "-force-wayland", StringComparison.OrdinalIgnoreCase)))
+        {
+            const string message = "Mate Engine requires native Wayland on this session. Start it with launch.sh; running the Unity executable directly selects X11 and is unsupported.";
+            Console.Error.WriteLine(message);
+            Console.Error.Flush();
+            Debug.LogError(message);
+            ExitImmediately(12);
+            return;
+        }
         setenv("NO_AT_BRIDGE", "1", 0);
+        if (WindowManager.IsNativeWaylandSession)
+        {
+            string[] waylandCandidates = { "libpulse.so.0", "libgdk-3.so.0", "libgtk-3.so.0", "libayatana-appindicator3.so.1" };
+            foreach (var name in waylandCandidates)
+            {
+                try
+                {
+                    var loader = LibraryLoader.GetPlatformDefaultLoader();
+                    var ptr = loader.LoadNativeLibrary(name);
+                    loader.FreeNativeLibrary(ptr);
+                }
+                catch
+                {
+                    Debug.LogWarning($"Native Wayland optional library is unavailable: {name}");
+                }
+            }
+            string[] nativeArgc = { };
+            if (!Gtk.Application.InitCheck(string.Empty, ref nativeArgc))
+                throw new Exception("GTK initialization failed for the native Wayland session.");
+            Debug.Log("MateEngine startup validation: native Wayland. Skipping X11 ARGB/compositor checks.");
+            return;
+        }
         string[] candidates = {"libX11.so.6", "libXext.so.6", "libXrender.so.1", "libXdamage.so.1", "libXrandr.so.2", "libXcursor.so.1", "libXcomposite.so.1", "libpulse.so.0", "libgdk-3.so.0", "libgtk-3.so.0", "libayatana-appindicator3.so.1"};
         List<string> missing = new();
         foreach (var name in candidates)

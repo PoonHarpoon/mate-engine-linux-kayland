@@ -1,175 +1,209 @@
-# 🌐 Language / 语言选择
-- [English](#English)
-- [简体中文](#简体中文)
+# Mate Engine: Native Wayland Fork
 
----
+A desktop companion for **KDE Plasma 6 on native Wayland**, with transparent
+avatars, custom VRM models, and window sitting.
 
-## English
+This fork builds on [Mate-Engine-Linux-Port](https://github.com/Marksonthegamer/Mate-Engine-Linux-Port),
+the unofficial Linux port of [Mate Engine](https://github.com/shinyflvre/Mate-Engine).
+Its focus is native Wayland integration with KDE's KWin compositor.
 
-> [!IMPORTANT]
-> The maintainance of this project will be temporarily suspended from September 1, 2026, to mid-June 2027, owing to the author’s commitment to intensive preparation for the national college entrance examination.
+![A Mate Engine avatar sitting on a Konsole window in KDE Plasma on native Wayland](Example.png)
 
-# Mate-Engine-Linux-Port
-This is an **unofficial** Linux port of shinyflvre's [MateEngine](https://github.com/shinyflvre/Mate-Engine) - A free Desktop Mate (the costy desktop pet software) alternative with a lightweight interface and custom VRM support.
-Tested on Ubuntu 24.04 LTS and Fedora 43.
+*Window sitting on KDE Plasma 6 with KWin running Wayland.*
 
-![](https://raw.githubusercontent.com/Marksonthegamer/Mate-Engine-Linux-Port/refs/heads/main/Screenshot.png)
+## Known issues: read before installing
 
-### Installation
-Simply grab a prebuilt one in [Releases](https://github.com/Marksonthegamer/Mate-Engine-Linux-Port/releases/) page and decompress it. Then, run the `install.sh` script in the output directory to install MateEngine. Finally, find Mate Engine from your application launcher and run or simply enter `mateengine` command in Terminal to launch MateEngine.
+> [!WARNING]
+> **The startup logo and splash screen are very buggy and visually broken.**
+> A fix is unlikely anytime soon. Expect this rough edge during startup, even
+> though normal desktop companion behavior is working.
 
-Note that if you use KDE and find there's black background in MateEngine, you also need to **disable "Allow applications to block compositing"** in `systemsettings`).
+- **Mods do not load correctly.**
+- **Avatar controls depend on model naming and structure.** Automatic detection
+  can be wrong; use Setup to rename or recategorize controls. Material and spring
+  physics entries are read-only inventories, not editors.
 
-Arch users may simply use the following command to install:
-```bash
-yay -S mateengine
+## What works
+
+- Transparent avatars with click-through outside their visible shape.
+- Dragging, scrolling to resize, monitor-relative startup placement, and topmost
+  control.
+- Window and panel detection, sitting, and movement along window edges.
+- Multi monitor setup with 3 different aspect ratios confirmed working in KDE6
+- Custom VRM0 and VRM1 importing, automatic avatar controls, and saved presets.
+- Presenter failure recovery: the Unity source window returns if the presenter
+  stops.
+
+Existing Mate Engine features include alarms, screensaver and Chibi modes,
+mouse tracking, custom dances, event messages, localization, Discord RPC, and
+optional AI chat. Dancing is experimental and uses PulseAudio or PipeWire's
+PulseAudio compatibility service for audio application detection.
+
+## Features added by this fork
+
+- **Native KDE Wayland integration:** A transparent presenter provides
+  click-through, pointer and keyboard input, dragging across monitors, scaling,
+  and recovery if the presenter stops. KWin integration handles placement,
+  topmost state, and desktop window geometry.
+- **Window and panel sitting:** The avatar detects exposed top edges, sits on
+  them, follows its supporting window, and detaches when the target is no longer
+  eligible. Covered parts of a seated avatar are hidden and click-through.
+- **Automatic avatar controls:** A custom scanner discovers controls from a
+  loaded model and exposes them through the Clothes menu, including models
+  without authored Mate Engine clothing entries.
+- **Per-avatar setup and presets:** Rename, categorize, hide, and group controls,
+  save presets, and restore imported defaults without modifying the model file.
+- **Avatar library cleanup:** Loading the library removes entries for missing
+  files or invalid paths while retaining model files and thumbnails.
+- **Pinned builds and portable export:** The Nix environment pins the Unity
+  Editor and native tooling; the exporter bundles the presenter's Qt runtime.
+
+### How automatic model detection works
+
+After a model loads, the fork's
+[`AvatarControlScanner`](Assets/MATE%20ENGINE%20-%20Scripts/AvatarControls/AvatarControls.cs)
+inspects its mesh renderers, blendshapes, VRM0/VRM1 expressions, and existing
+`MEClothes` entries. It reads available VRM title, author, and version metadata.
+Authored clothing entries retain their own controls; other meshes and morphs
+receive controls discovered from the model's contents.
+
+Name-based rules organize clothing, accessories, body morphs, and facial controls.
+Matching normalized morph names on body and clothing meshes are linked so one
+slider can adjust both. Recognized clothing correction morphs can follow an
+outfit's visibility. This detection depends on model structure and naming;
+unrecognized meshes appear under Uncategorized, and raw controls are available
+in Advanced. Setup lets you correct the organization manually.
+
+Saved profiles are matched first by the model file's SHA-256 hash, then by a
+signature derived from its metadata and discovered structure. This allows a
+renamed or moved file to retain its settings. Ambiguous matches use defaults
+until a profile is selected. Profiles live in Unity's per-user `AvatarProfiles`
+directory, outside the model file.
+
+## Supported desktop
+
+| Environment | Status |
+| --- | --- |
+| KDE Plasma 6 / KWin, native Wayland | Supported target |
+| Other Wayland compositors | Unsupported; desktop integration currently depends on KWin backend, don't expect it to even render, |
+| X11 / XWayland | Outside this fork's scope; use the source project for x11, this fork is for specifically wayland support |
+
+The development baseline uses Arch Linux and Unity `6000.2.6f2`. Earlier
+functional checks used a VM with KWin 6.7.5 and software rendering; those checks
+are separate from the confirmed KDE6 multi-monitor setup. Support does not imply
+that every GPU, monitor layout, or distribution has been tested.
+
+## Download v0.1
+
+The `v0.1` release contains the source snapshot and the x86-64 Linux AppImage.
+Download the AppImage from [Releases](https://github.com/PoonHarpoon/mate-engine-linux-kayland/releases/tag/v0.1),
+make it executable, and run it from a KDE Plasma 6 Wayland session:
+
+```sh
+chmod +x MateEngine-Linux-Wayland-v0.1-x86_64.AppImage
+./MateEngine-Linux-Wayland-v0.1-x86_64.AppImage -force-glcore
 ```
 
-### Requirements
-- A common GNU/Linux distro
-- A common X11 desktop environment which supports compositing (such as KDE, Xfce, GNOME, etc.)
-- At least 1 GiB of swap space (optional)
-- `libpulse0` and `pipewire-pulse` (if you are using Pipewire as audio server)
-- `libgtk-3-0t64 libglib2.0-0t64 libayatana-appindicator`
-- `libx11-6 libxext6 libxrender1 libxdamage1 libxcursor1 libxrandr2 libxcomposite1`
+The package includes CPU-selected implementations and is not AVX-512-only.
+It still requires compatible host libraries, graphics drivers, and FUSE support.
+See the release notes for tested scope and runtime requirements.
 
-On Ubuntu and other Debian-based Linux:
-```bash
-sudo apt install libpulse0 libgtk-3-0t64 libglib2.0-0t64 libayatana-appindicator3-1 libx11-6 libxext6 libxrender1 libxdamage1 libxcursor1 libxrandr2 libxcomposite1
-```
-On Fedora:
-```bash
-sudo dnf install pulseaudio-libs gtk3 glib2 libX11 libXext libXrender libXrandr libXdamage libXcursor libXcomposite libayatana-appindicator-gtk3
-```
-On Arch Linux:
-```bash
-sudo pacman -S libpulse gtk3 glib2 libx11 libxext libxrender libxrandr libxdamage libxcursor libxcomposite libayatana-appindicator
+## Build and run
+
+You need KDE Plasma 6 in a Wayland session, KWin layer-shell support, and
+Determinate Nix with flakes enabled. The pinned development environment supplies
+Unity `6000.2.6f2` and the native build dependencies. Unity license activation
+requires your own Unity account and remains outside the reproducible build.
+
+If you need to activate a license, launch Unity Hub:
+
+```sh
+nix run .#unityhub
 ```
 
-Note that if you use GNOME, you will need [AppIndicator and KStatusNotifierItem Support extension](https://extensions.gnome.org/extension/615/appindicator-support/) to show tray icon.
+Then, from the repository root:
 
-### How to build / compile
-
-- First of all, for security reasons, you need to compile StandaloneFileBrowser plugin manually (just use `make` command under `Mate-Engine-Linux-Port/Plugins/Linux/StandaloneFileBrowser`, and copy `libStandaloneFileBrowser.so` to `Mate-Engine-Linux-Port/Assets/MATE ENGINE - Packages/StandaloneFileBrowser/Plugins/Linux/x86_64`)
-- Then install Unity 6000.2.6f2 using Unity Hub. Make sure `Unity` executable can be located under `~/Unity/Hub/Editor/6000.2.6f2/Editor/`. After that, you have the following build options:
-
-#### Option 1: Build with Unity Editor GUI (Safest)
-
-Just open the project in Unity Hub, then launch it with Unity 6000.2.6f2. Build the player and set the executable name to "MateEngineX.x86_64".<br>
-Yeah, it takes a bit to load everything, that’s expected.
-
-#### Option 2: CLI Build (Not recommended)
-
-Run `build.sh` script under project root in a terminal, then wait until command exits. This way of building is only used to debug & build quickly, and you may see some abnormal behaviours in builds.
-
-### Ported Features & Highlights
-- Model visuals, alarm, screensaver, Chibi mode (they always work, any external libraries are not required for them)
-- Transparent background with cutoff
-- Set window always on top
-- Dancing (experimental, require `pulseaudio` or `pipewire-pulse` for audio program detection)
-- AI Chat (require `llama-3.2-3b-instruct-q4_k_m.gguf`, case-sensitive, **must be placed under where ME executable is**)
-- Mouse tracking (hand holding and eyes tracking)
-- Discord RPC
-- Custom VRM importing
-- Simplified Chinese localization
-- Event-based Messages
-- Lower RAM usage than Windows version (Memory trimming enabled)
-
-![](https://raw.githubusercontent.com/Marksonthegamer/Mate-Engine-Linux-Port/refs/heads/main/RAMComparition.png)
-
-### Known Issues
-- Window snapping and dock sitting don't work on XWayland Interface
-- Mods do not load correctly (delayed fix)
-
-### Removed
-- Steam API (no workshop support)
-- NAudio
-- UniWindowController
-
-This project lacks further testing and updates. Feel free to make PRs to contribute!
-
----
-
-## 简体中文
-
-> [!IMPORTANT]
-> 由于本人备战高考需要，从2026年9月1日起，本项目将暂停维护直到2027年6月中旬。
-
-# Mate-Engine-Linux-Port
-这是一个非官方的[MateEngine](https://github.com/shinyflvre/Mate-Engine) Linux移植版 - 一个免费的Desktop Mate替代品（桌宠软件），具有轻量级界面和自定义VRM支持。
-已在Ubuntu 24.04 LTS上测试。
-
-![](https://raw.githubusercontent.com/Marksonthegamer/Mate-Engine-Linux-Port/refs/heads/main/Screenshot.png)
-
-### 安装
-在[Releases](https://github.com/Marksonthegamer/Mate-Engine-Linux-Port/releases/)页面获取预构建版本并解压。然后，运行输出目录中的`install.sh`以安装 MateEngine。最后，在应用程序启动器中找到 Mate Engine 并运行，或者直接在终端内运行命令`mateengine`来启动 MateEngine。
-
-注意，如果你使用 KDE Plasma 桌面环境且遇到了黑色背景，你还需要在 KDE 系统设置中禁用“允许应用程序阻止显示特效合成”）。
-
-Arch Linux 用户可以直接使用以下命令安装：
-```bash
-yay -S mateengine
+```sh
+nix develop
+./build.sh ./Build
+cd Build
+env -u DISPLAY ./launch.sh
 ```
 
-### 系统要求
-- 一个常见的 GNU/Linux 发行版
-- 一个常见的 X11 桌面环境，支持显示特效合成（compositing） ，比如KDE，Xfce，GNOME等
-- 至少 1 GiB 的交换空间（可选）
-- `libpulse0` 和 `pipewire-pulse` (如果你在用 Pipewire 作为音频服务器)
-- `libgtk-3-0t64 libglib2.0-0t64 libayatana-appindicator`
-- `libx11-6 libxext6 libxrender1 libxdamage1 libxcursor1 libxrandr2 libxcomposite1`
+The first setup downloads about 4.1 GiB for the Editor plus runtime dependencies.
+The first import and build can take several minutes. Keep the ignored `Library/`
+directory to reuse Unity's asset and shader caches.
 
-以下命令适用于 Ubuntu 和别的基于 Debian 的 Linux:
-```bash
-sudo apt install libpulse0 libgtk-3-0t64 libglib2.0-0t64 libayatana-appindicator3-1 libx11-6 libxext6 libxrender1 libxdamage1 libxcursor1 libxrandr2 libxcomposite1
+The build compiles the `StandaloneFileBrowser` native plugin from source, builds
+the Unity player, and packages the native Wayland presenter. Use `launch.sh` to
+start the player: it selects native Wayland and starts the presenter. Confirm
+`Selected window backend: wayland` in the Unity player log.
+
+Source-project packages do not contain this fork's native Wayland integration.
+See [usage.md](usage.md) for build options, Editor launch, runtime requirements,
+and troubleshooting.
+
+### Portable export
+
+For a portable player, build the file-browser plugin against the destination
+loader and host GTK libraries, then export into a new directory:
+
+```sh
+MATEENGINE_PORTABLE_PLUGIN=1 ./build.sh ./Build
+nix run .#export-portable -- ./Build ./MateEngine-portable
 ```
-以下命令适用于 Fedora:
-```bash
-sudo dnf install pulseaudio-libs gtk3 glib2 libX11 libXext libXrender libXrandr libXdamage libXcursor libXcomposite libayatana-appindicator-gtk3
-```
-以下命令适用于 Arch Linux:
-```bash
-sudo pacman -S libpulse gtk3 glib2 libx11 libxext libxrender libxrandr libxdamage libxcursor libxcomposite libayatana-appindicator
-```
 
-如果你使用 GNOME 桌面环境，你还需要安装 [AppIndicator and KStatusNotifierItem Support extension](https://extensions.gnome.org/extension/615/appindicator-support/) 以显示托盘图标。
+The destination must not already exist. The exported directory bundles the
+presenter's Qt runtime and is intended to run without Nix on the destination.
+It still needs compatible x86-64 Linux host libraries, graphics drivers, KDE
+Wayland, and AppImage runtime support. Test it on the target machine before
+sharing it. See [portable export instructions](usage.md#build-a-player).
 
-### 如何编译
+## Using your companion
 
-- 首先，出于安全原因，你需要手动编译 StandaloneFileBrowser 插件（只需在 `Mate-Engine-Linux-Port/Plugins/Linux/StandaloneFileBrowser` 下使用 `make` 命令，然后将 `libStandaloneFileBrowser.so` 复制到 `Mate-Engine-Linux-Port/Assets/MATE ENGINE - Packages/StandaloneFileBrowser/Plugins/Linux/x86_64`）。
-- 然后使用 Unity Hub 安装 Unity 6000.2.6f2 版本。确保 `Unity` 可执行文件位于 `~/Unity/Hub/Editor/6000.2.6f2/Editor/` 下。完成之后，你将拥有以下构建选项：
+| Action | Control |
+| --- | --- |
+| Open the radial menu | Right-click the avatar |
+| Move the avatar | Left-click and drag |
+| Change avatar size | Scroll over the avatar |
+| Sit on a window or panel | Enable window sitting, hold a drag for at least one second, and cross an exposed top edge with the avatar's hips |
+| Adjust an imported avatar | Open Clothes to access Avatar Controls |
+| Lifecycle and window actions | Use the tray menu |
 
-#### 选项 1：使用 Unity 编辑器 GUI 构建（最安全）
+Imported VRM avatars expose discovered clothing, body morphs, expressions, and
+face morphs. Linked body and clothing morphs adjust together. Advanced shows raw
+controls and material/physics inventories; Setup lets you organize controls, and
+presets save combinations. Keyboard input is available while Avatar Controls is
+open, with the `ABC` on-screen keyboard as a fallback.
 
-只需在 Unity Hub 中打开项目，然后使用 Unity 6000.2.6f2 版本启动它。构建 Player 并设置可执行文件名为“MateEngineX.x86_64”。<br>
-是的，加载所有内容需要一点时间，这是正常的。
+Profiles are saved under `AvatarProfiles` in Unity's per-user data directory;
+model files are not modified. Reset restores imported defaults. Existing `.me`
+clothing keeps its authored behavior.
 
-#### 选项 2：命令行构建（不推荐）
+Opening or reloading the avatar library removes entries whose source files are
+missing or whose paths are invalid. It does not delete model files or thumbnails.
+Models on disconnected storage must be reimported after reconnecting it.
 
-在项目根目录下的终端中运行 `build.sh` 脚本并等待直到命令退出。这种构建方式仅用于快速调试和构建，你可能会在构建中看到一些异常行为。
+Optional AI chat requires your own `llama-3.2-3b-instruct-q4_k_m.gguf` beside the
+player executable. Model weights and local test avatars are not distributed with
+this fork.
 
-### 移植的功能与亮点
-- 模型视觉效果、闹钟、屏保、Q版模式（它们不需要任何外部库，因此始终工作）
-- 带 Cutoff 的透明背景
-- 窗口置顶
-- 跳舞（实验性，需要PulseAudio或Pipewire-Pulse用于音频程序检测）
-- AI聊天（需要`llama-3.2-3b-instruct-q4_k_m.gguf`，文件名区分大小写，必须放在可执行文件目录）
-- 鼠标跟踪（手持和眼睛跟踪）
-- Discord RPC
-- 自定义 VRM 模型导入
-- 简体中文版汉化
-- 基于事件的提示信息
-- 与 Windows 版相比，使用更少内存（已启用内存削减）
+## Development and bug reports
 
-![](https://raw.githubusercontent.com/Marksonthegamer/Mate-Engine-Linux-Port/refs/heads/main/RAMComparition.png)
+Unity renders the avatar; a separate native Wayland presenter displays its RGBA
+frames and forwards input. KWin integration supplies desktop geometry and window
+operations. Technical details live in the [presenter documentation](Native/WaylandPresenter/README.md)
+and [sitting validation guide](Native/WaylandPresenter/VALIDATION.md).
 
-### 已知问题
-- 坐在窗口和程序坞上无法在 XWayland 协议上正常工作
-- Mod 不会正常加载
+For a bug report, include reproduction steps, the revision and launch command,
+Plasma/KWin version, graphics API and renderer, monitor layout and scales, and
+relevant Unity/presenter log lines. Record `XDG_SESSION_TYPE`, whether
+`WAYLAND_DISPLAY` and `DISPLAY` are set, and the observed Unity backend. Review
+logs for personal information before sharing them.
 
-### 已删除
-- Steam API (无创意工坊支持)
-- NAudio
-- UniWindowController
+## License
 
-该项目缺乏进一步的测试和更新。请随时通过Pull Requests来贡献！
+This fork retains the upstream **MateEngine Pro License (v2.0)**. See
+[LICENSE](LICENSE) for its terms, including the separate asset terms. Bundled
+third-party components retain their own licenses and notices in
+[Third Party Licenses](Third%20Party%20Licenses/).

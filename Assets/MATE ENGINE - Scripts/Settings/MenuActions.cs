@@ -101,7 +101,13 @@ public class MenuActions : MonoBehaviour
     {
         if (radialMenu == null) return;
 
-        bool keyDown = Input.GetKeyDown(radialMenuKey);
+        bool keyDown = radialMenuKey switch
+        {
+            KeyCode.Mouse0 => MateeInput.GetMouseButtonDown(0),
+            KeyCode.Mouse1 => MateeInput.GetMouseButtonDown(1),
+            KeyCode.Mouse2 => MateeInput.GetMouseButtonDown(2),
+            _ => Input.GetKeyDown(radialMenuKey)
+        };
         if (!keyDown)
         {
             if (followBone && IsRadialOpen() && radialRect != null && currentAnimator != null)

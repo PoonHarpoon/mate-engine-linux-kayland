@@ -28,7 +28,11 @@ public class SystemTray : MonoBehaviour
         if (trayBuilt)
             return;
         TrayIndicator.Instance.OnBuildMenu = BuildMenu;
-        TrayIndicator.Instance.InitializeTrayIcon(iconName);
+        if (!TrayIndicator.Instance.InitializeTrayIcon(iconName))
+        {
+            enabled = false;
+            return;
+        }
         TrayIndicator.Instance.AddMenuItem(BuildMenu());
         trayBuilt = true;
     }

@@ -649,6 +649,8 @@ namespace Kirurobo
         /// </summary>
         private Vector2 GetClientCursorPosition()
         {
+            if (MateeInput.PresenterActive)
+                return MateeInput.MousePosition;
 
             // New Input System ではフォーカスが無い場合にマウス座標が取得できないため独自に計算する
             Vector2 mousePos = UniWinCore.GetCursorPosition();
@@ -675,7 +677,7 @@ namespace Kirurobo
             //   Gameウィンドウ単体ではなかったり、Scaleが異なる場合があるため単純計算では求まらない
 #if UNITY_EDITOR 
     #if ENABLE_LEGACY_INPUT_MANAGER
-            return Input.mousePosition;
+            return MateeInput.MousePosition;
     #elif UNITY_EDITOR && ENABLE_INPUT_SYSTEM
             return Mouse.current.position.ReadValue();
     #else

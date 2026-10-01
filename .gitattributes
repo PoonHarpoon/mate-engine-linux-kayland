@@ -1,0 +1,62 @@
+* text=auto
+
+# Source and project text files use stable Unix line endings.
+*.c text eol=lf
+*.cc text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.hpp text eol=lf
+*.cs text eol=lf diff=csharp
+*.rs text eol=lf
+*.sh text eol=lf
+*.nix text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.gltf text eol=lf
+*.xml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.asmdef text eol=lf
+*.asmref text eol=lf
+*.cginc text eol=lf
+*.compute text eol=lf
+*.hlsl text eol=lf
+*.shader text eol=lf
+*.meta text eol=lf
+*.prefab text eol=lf
+*.unity text eol=lf
+
+# Binary assets must never receive newline conversion.
+*.a binary
+*.bin binary
+*.bundle binary
+*.bytes binary
+*.dll binary
+*.dylib binary
+*.exe binary
+*.fbx binary
+*.gif binary
+*.glb binary
+*.ico binary
+*.jpeg binary
+*.jpg binary
+*.me binary
+*.mdb binary
+*.mp3 binary
+*.ogg binary
+*.otf binary
+*.pdb binary
+*.png binary
+*.psd binary
+*.so binary
+*.tga binary
+*.tif binary
+*.tiff binary
+*.ttf binary
+*.vrm binary
+*.wav binary
+*.woff binary
+*.woff2 binary
+*.zip binary

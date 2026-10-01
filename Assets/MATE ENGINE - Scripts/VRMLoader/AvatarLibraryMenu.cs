@@ -76,6 +76,7 @@ public class AvatarLibraryMenu : MonoBehaviour
 
     public void OpenLibrary()
     {
+        ReloadAvatars();
         libraryPanel.SetActive(true);
         
         if (liveUpdateRoutine != null) StopCoroutine(liveUpdateRoutine);
@@ -89,49 +90,60 @@ public class AvatarLibraryMenu : MonoBehaviour
 
     private void LoadAvatarList()
     {
-        avatarEntries.Clear();
+        avatarEntries = ReadAvatarList(avatarsJsonPath);
+    }
 
-        if (File.Exists(avatarsJsonPath))
+    // Keep file cleanup separate from scene objects so it can be checked with
+    // disposable libraries without touching the user's persistent config.
+    private static List<AvatarEntry> ReadAvatarList(string jsonPath)
+    {
+        List<AvatarEntry> entries;
+        try
+        {
+            entries = JsonConvert.DeserializeObject<List<AvatarEntry>>(File.ReadAllText(jsonPath))
+                ?? new List<AvatarEntry>();
+        }
+        catch (FileNotFoundException) { return new List<AvatarEntry>(); }
+        catch (DirectoryNotFoundException) { return new List<AvatarEntry>(); }
+        catch (Exception e)
+        {
+            Debug.LogError("[AvatarLibraryMenu] Failed to load avatars.json: " + e.Message);
+            return new List<AvatarEntry>();
+        }
+
+        bool changed = entries.RemoveAll(entry =>
+        {
+            if (entry != null && !string.IsNullOrWhiteSpace(entry.filePath) && File.Exists(entry.filePath))
+                return false;
+
+            Debug.LogWarning("[AvatarLibraryMenu] Removing missing or invalid avatar entry: " +
+                (entry?.filePath ?? "<null>"));
+            return true;
+        }) > 0;
+
+        string workshopDir = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(jsonPath), "Steam Workshop"));
+        foreach (var entry in entries)
+        {
+            if (!entry.isOwner && !entry.isSteamWorkshop && entry.steamFileId == 0 &&
+                !Path.GetFullPath(entry.filePath).StartsWith(workshopDir, StringComparison.OrdinalIgnoreCase))
+            {
+                entry.isOwner = true;
+                changed = true;
+            }
+        }
+
+        if (changed)
         {
             try
             {
-                string json = File.ReadAllText(avatarsJsonPath);
-                avatarEntries = JsonConvert.DeserializeObject<List<AvatarEntry>>(json);
+                File.WriteAllText(jsonPath, JsonConvert.SerializeObject(entries, Formatting.Indented));
             }
-            catch (System.Exception e)
+            catch (Exception e)
             {
-                Debug.LogError("[AvatarLibraryMenu] Failed to load avatars.json: " + e.Message);
+                Debug.LogError("[AvatarLibraryMenu] Failed to save cleaned avatars.json: " + e.Message);
             }
         }
-
-        try
-        {
-            string workshopDir = Path.GetFullPath(Path.Combine(Application.persistentDataPath, "Steam Workshop"));
-            bool changed = false;
-
-            foreach (var e in avatarEntries)
-            {
-                if (!e.isOwner)
-                {
-                    string full = string.IsNullOrEmpty(e.filePath) ? "" : Path.GetFullPath(e.filePath);
-                    bool isLocal = !string.IsNullOrEmpty(full) && File.Exists(full) &&
-                                   !full.StartsWith(workshopDir, StringComparison.OrdinalIgnoreCase);
-
-                    if (!e.isSteamWorkshop && e.steamFileId == 0 && isLocal)
-                    {
-                        e.isOwner = true;
-                        changed = true;
-                    }
-                }
-            }
-
-            if (changed)
-            {
-                string newJson = JsonConvert.SerializeObject(avatarEntries, Formatting.Indented);
-                File.WriteAllText(avatarsJsonPath, newJson);
-            }
-        }
-        catch { }
+        return entries;
     }
 
 

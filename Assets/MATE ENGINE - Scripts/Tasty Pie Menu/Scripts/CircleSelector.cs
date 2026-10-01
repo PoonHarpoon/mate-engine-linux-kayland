@@ -155,7 +155,7 @@ namespace Xamin
                     _cursor.fillAmount = Mathf.Lerp(_cursor.fillAmount, _desiredFill, 0.2f);
 
                     Vector3 screenBounds = Camera.main.WorldToScreenPoint(transform.position);
-                    Vector2 vector = (Input.mousePosition - screenBounds);
+                    Vector2 vector = (MateeInput.MousePosition - screenBounds);
                     if (tiltTowardsMouse)
                     {
                         float x = vector.x / screenBounds.x, y = vector.y / screenBounds.y;
@@ -182,7 +182,7 @@ namespace Xamin
                     if (mouseRotation < 0f) mouseRotation += 360f;
                     float cursorRotation = -(mouseRotation - _cursor.fillAmount * 360f / 2f) + zRotation;
 
-                    float mouseDistanceFromCenter = Vector2.Distance(Camera.main.WorldToScreenPoint(transform.position), Input.mousePosition);
+                    float mouseDistanceFromCenter = Vector2.Distance(Camera.main.WorldToScreenPoint(transform.position), MateeInput.MousePosition);
 
                     if ((selectOnlyOnHover && controlType == ControlType.mouseAndTouch && mouseDistanceFromCenter > pieThickness) ||
                         (selectOnlyOnHover && controlType == ControlType.gamepad &&
@@ -261,7 +261,7 @@ namespace Xamin
                     }
                     if (_cursor.isActiveAndEnabled)
                         CheckForInput();
-                    else if (Input.GetButtonUp(activationButton))
+                    else if (ActivationButtonUp())
                         Close();
                 }
                 _previousUseSeparators = UseSeparators;
@@ -296,15 +296,15 @@ namespace Xamin
 
             var btn = instancedButtons[SelectedSegment];
             _cursor.rectTransform.localPosition = Vector3.Lerp(_cursor.rectTransform.localPosition,
-                Input.GetButton(activationButton) ? new Vector3(0, 0, RaiseOnSelection ? -10 : 0) : Vector3.zero, LerpAmount);
+                ActivationButtonHeld() ? new Vector3(0, 0, RaiseOnSelection ? -10 : 0) : Vector3.zero, LerpAmount);
 
-            if (Input.GetButton(activationButton))
+            if (ActivationButtonHeld())
             {
                 if (btn.unlocked)
                     SelectedSegment.transform.localScale = new Vector2(.8f, .8f);
             }
 
-            if (Input.GetButtonUp(activationButton))
+            if (ActivationButtonUp())
             {
                 if (btn.unlocked)
                 {
@@ -315,6 +315,16 @@ namespace Xamin
                 Close();
             }
         }
+
+        // The visible native-Wayland surface is the presenter; Unity's source
+        // window is minimized and its legacy Input button state never changes.
+        // Fire1 is the mouse-left binding used by this menu. Preserve custom
+        // Input Manager bindings on every other backend.
+        bool ActivationButtonHeld() => WindowManager.IsNativeWaylandSession && MateeInput.PresenterActive && activationButton == "Fire1"
+            ? MateeInput.GetMouseButton(0) : Input.GetButton(activationButton);
+
+        bool ActivationButtonUp() => WindowManager.IsNativeWaylandSession && MateeInput.PresenterActive && activationButton == "Fire1"
+            ? MateeInput.GetMouseButtonUp(0) : Input.GetButtonUp(activationButton);
 
         void EnsureAnimatorReceiver()
         {
@@ -446,7 +456,9 @@ namespace Xamin
             {
                 GameObject avatarGO = animatorReceiver?.avatarAnimator?.gameObject;
                 bool hasClothes = avatarGO != null && (avatarGO.GetComponent<MEClothes>() ?? avatarGO.GetComponentInChildren<MEClothes>(true)) != null;
-                if (!hasClothes) return true;
+                if (!hasClothes && Matee.AvatarControls.AvatarControlRuntime.LastError == null &&
+                    (Matee.AvatarControls.AvatarControlRuntime.Current == null ||
+                    Matee.AvatarControls.AvatarControlRuntime.Current.Controls.Count == 0)) return true;
             }
             return false;
         }

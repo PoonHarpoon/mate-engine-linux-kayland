@@ -39,7 +39,7 @@ public class ScrollHelper : MonoBehaviour, IPointerEnterHandler, IPointerExitHan
         // 1) Input einsammeln (Mausrad)
         if (isPointerOver)
         {
-            float wheel = Input.GetAxis("Mouse ScrollWheel"); // + hoch, - runter (je nach OS)
+            float wheel = MateeInput.MouseScrollDelta.y; // + hoch, - runter (je nach OS)
             if (Mathf.Abs(wheel) > 0.0001f)
             {
                 // in Pixel-Geschwindigkeit umrechnen

@@ -1,0 +1,78 @@
+// Loaded for this player session only. No persistent KWin configuration.
+(function () {
+    const bus = '__BUS__', epoch = '__EPOCH__', ownerPid = __PID__;
+    const presenterPid = __PRESENTER_PID__;
+    let dirty = true, stopped = false, seenOwner = false, sequence = 0, lastSent = 0;
+    const watched = {};
+    function changed() { dirty = true; }
+    function connect(object, name, fn) {
+        if (object[name] && object[name].connect) object[name].connect(fn);
+    }
+    function rect(r) { return { x:r.x, y:r.y, width:r.width, height:r.height }; }
+    function watch(w) {
+        const id = String(w.internalId);
+        if (watched[id]) return;
+        watched[id] = true;
+        ['frameGeometryChanged','minimizedChanged','hiddenChanged','fullScreenChanged',
+         'maximizedChanged','desktopsChanged','activitiesChanged','stackingOrderChanged',
+         'outputChanged','opacityChanged'].forEach(function (s) { connect(w,s,changed); });
+    }
+    function snapshot() {
+        if (!workspace.stackingOrder || !workspace.screens) throw Error('KWin desktop capabilities unavailable');
+        const windows = workspace.stackingOrder;
+        const result = { version:1, sequence:++sequence, sittingSupported:true, windows:[], outputs:[],
+                         mouseX:workspace.cursorPos.x, mouseY:workspace.cursorPos.y };
+        for (let i=0; i<windows.length; ++i) {
+            const w=windows[i]; watch(w);
+            if (w.pid===ownerPid) seenOwner=true;
+            if (typeof w.hidden !== 'boolean' || typeof w.maximizeMode !== 'number')
+                result.sittingSupported=false;
+            const desktops=w.desktops, activities=w.activities;
+            const onDesktop=desktops.length===0 || desktops.indexOf(workspace.currentDesktop)!==-1;
+            const onActivity=activities.length===0 || activities.indexOf(workspace.currentActivity)!==-1;
+            const resourceClass=String(w.resourceClass);
+            // AppImage packaging can leave KWin's resourceClass empty. The
+            // launcher supplies the session's presenter PID independently.
+            const presenter=(presenterPid>0 && w.pid===presenterPid) ||
+                resourceClass.toLowerCase().indexOf('matee-wayland-presenter')!==-1;
+            result.windows.push({ uuid:String(w.internalId), pid:w.pid, rect:rect(w.frameGeometry),
+                visible:!w.deleted && !w.minimized && !w.hidden && onDesktop && onActivity &&
+                        !(workspace.showingDesktop && !w.dock && !w.desktopWindow) && w.opacity>0,
+                dock:w.dock, desktop:w.desktopWindow, normal:w.normalWindow,
+                popup:w.popupWindow, fullscreen:w.fullScreen, maximized:w.maximizeMode!==0,
+                className:resourceClass, own:w.pid===ownerPid || presenter });
+        }
+        for (let i=0; i<workspace.screens.length; ++i) {
+            const s=workspace.screens[i];
+            result.outputs.push({ name:s.name, rect:rect(s.geometry), scale:s.devicePixelRatio });
+        }
+        return result;
+    }
+    function pump() {
+        if (stopped) return;
+        try {
+            const now=Date.now();
+            if (dirty || now-lastSent>=250) {
+                dirty=false; lastSent=now;
+                const payload=JSON.stringify(snapshot());
+                callDBus(bus,'/','org.kdotool.callback','DesktopSnapshot',epoch,payload,pump);
+            } else callDBus(bus,'/','org.kdotool.callback','DesktopTick',epoch,pump);
+        } catch(e) {
+            stopped=true;
+            callDBus(bus,'/','org.kdotool.callback','DesktopSnapshot',epoch,JSON.stringify({version:1,error:String(e)}));
+        }
+    }
+    workspace.windowAdded.connect(changed);
+    workspace.windowRemoved.connect(function(w) {
+        delete watched[String(w.internalId)]; changed();
+        if (seenOwner && w.pid===ownerPid) {
+            const removed=String(w.internalId);
+            stopped=!workspace.windowList().some(function(other) {
+                return other.pid===ownerPid && String(other.internalId)!==removed;
+            });
+        }
+    });
+    ['stackingOrderChanged','currentDesktopChanged','currentActivityChanged','screensChanged',
+     'virtualScreenGeometryChanged','showingDesktopChanged','cursorPosChanged'].forEach(function(s) { connect(workspace,s,changed); });
+    pump();
+})();

@@ -1,7 +1,9 @@
 ﻿using UnityEngine;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
+[DefaultExecutionOrder(100)]
 public class AvatarWindowHandler : MonoBehaviour
 {
     [Header("Snap Safety")]
@@ -127,18 +129,20 @@ public class AvatarWindowHandler : MonoBehaviour
     Vector3 boundsSizeSnapLocal;
     float seatNormY;
     bool _recentUnsnap;
-    int _lastSnapTopY;
+    float _lastSnapTopY;
+    DesktopSnapshot desktop = DesktopSnapshot.Empty;
+    readonly List<WindowEntry> visibleWindows = new List<WindowEntry>();
     int _currentPid;
     float _guardRadiusSq;
 
     // Helper struct to match original logic's reliance on Left/Top/Right/Bottom
     public struct RECT { 
-        public int Left, Top, Right, Bottom; 
-        public static RECT FromRect(RectInt r) => new RECT { 
-            Left = (int)r.x, 
-            Top = (int)r.y, 
-            Right = (int)(r.x + r.width), 
-            Bottom = (int)(r.y + r.height) 
+        public float Left, Top, Right, Bottom;
+        public static RECT FromRect(Rect r) => new RECT {
+            Left = r.x,
+            Top = r.y,
+            Right = (r.x + r.width),
+            Bottom = (r.y + r.height)
         };
     }
 
@@ -206,9 +210,38 @@ public class AvatarWindowHandler : MonoBehaviour
         return false;
     }
 
+    bool IsDragging => WindowManager.IsNativeWaylandSession ? WindowManager.Instance != null && WindowManager.Instance.IsDragging : controller != null && controller.isDragging;
+
+    readonly bool sittingDiagnostics = Environment.GetEnvironmentVariable("MATEENGINE_SITTING_DIAGNOSTICS") == "1";
+    string lastSitReason;
+    float nextSitTrace;
+    float diagnosticRoom;
+    string diagnosticBlocker = "none";
+    void TraceSit(string reason)
+    {
+        if (!sittingDiagnostics || (reason==lastSitReason && Time.unscaledTime<nextSitTrace)) return;
+        lastSitReason=reason; nextSitTrace=Time.unscaledTime+1;
+        var manager=WindowManager.Instance;
+        Rect pet=default;
+        bool rectReady=manager!=null && manager.TryGetVisiblePetRect(out pet);
+        float px=0,py=0;
+        bool projected=manager!=null && unityHWND!=IntPtr.Zero && targetCamera!=null && ComputeZoneDesktop(out px,out py);
+        var nearest=cachedWindows.OrderBy(w=>Mathf.Abs(w.rect.Top-py)+Mathf.Max(0,w.rect.Left-px)+Mathf.Max(0,px-w.rect.Right)).FirstOrDefault();
+        double age=desktop.ReceivedAt==0?-1:(System.Diagnostics.Stopwatch.GetTimestamp()-desktop.ReceivedAt)/(double)System.Diagnostics.Stopwatch.Frequency;
+        Debug.Log($"Sitting decision: {reason}; handler={GetInstanceID()} animator={animator!=null} controller={controller!=null} camera={targetCamera!=null} self={unityHWND} enabled={SaveLoadHandler.Instance?.data.enableWindowSitting} movementDrag={manager?.IsDragging} avatarDrag={controller?.isDragging} hold={( _dragStartTime<0?0:Time.unscaledTime-_dragStartTime):F2} snapshotAge={age:F2} supported={desktop.SittingSupported} seats={cachedWindows.Count} rectReady={rectReady} pet={pet} projected={projected} probe=({px:F1},{py:F1}) radius={ScaledProbeRadiusI()} nearest={nearest.hwnd} edge=({nearest.rect.Left:F1},{nearest.rect.Top:F1},{nearest.rect.Right:F1}) room={diagnosticRoom:F1} blocker={diagnosticBlocker}");
+    }
+
     void Update()
     {
-        if (WindowManager.Instance == null || unityHWND == IntPtr.Zero || animator == null || controller == null) return;
+        if (WindowManager.Instance == null || animator == null || controller == null) { TraceSit("handler-not-ready"); return; }
+        if (unityHWND==IntPtr.Zero) unityHWND=WindowManager.Instance.UnityWindow;
+        if (unityHWND==IntPtr.Zero) { TraceSit("source-handle-unavailable"); return; }
+        if (WindowManager.IsNativeWaylandSession) {
+            desktop=WindowManager.Instance.NativeDesktop;
+            if (!desktop.Fresh) { TraceSit("desktop-unavailable"); ClearSnapAndHide(reason:"desktop-unavailable"); return; }
+            UpdateCachedWindows();
+            if (snappedHWND!=IntPtr.Zero) RebuildActiveOccluders();
+        }
         
         if (snappedHWND != IntPtr.Zero)
         {
@@ -216,15 +249,15 @@ public class AvatarWindowHandler : MonoBehaviour
             _prevLossyScale = transform.lossyScale;
         }
 
-        if (!SaveLoadHandler.Instance.data.enableWindowSitting) { ClearSnapAndHide(); return; }
-        if (IsSitBlocked()) { if (snappedHWND != IntPtr.Zero) ClearSnapAndHide(); return; }
+        if (!SaveLoadHandler.Instance.data.enableWindowSitting) { TraceSit("disabled"); ClearSnapAndHide(reason:"setting-disabled"); return; }
+        if (IsSitBlocked()) { TraceSit("animation-blocker"); if (snappedHWND != IntPtr.Zero) ClearSnapAndHide(reason:"animation-blocker"); return; }
 
         bool isWindowSitNow = animator.GetBool("isWindowSit");
         if (isWindowSitNow && !wasSitting) animator.SetFloat(windowSitIndexParam, UnityEngine.Random.Range(0, totalWindowSitAnimations));
         wasSitting = isWindowSitNow;
 
-        float enumHz = (controller.isDragging || snappedHWND != IntPtr.Zero) ? Mathf.Max(1f, windowEnumFPS) : Mathf.Max(1f, windowEnumIdleFPS);
-        if (Time.unscaledTime >= _nextEnumTime)
+        float enumHz = (IsDragging || snappedHWND != IntPtr.Zero) ? Mathf.Max(1f, windowEnumFPS) : Mathf.Max(1f, windowEnumIdleFPS);
+        if (!WindowManager.IsNativeWaylandSession && Time.unscaledTime >= _nextEnumTime)
         {
             UpdateCachedWindows();
             if (snappedHWND != IntPtr.Zero) RebuildActiveOccluders();
@@ -232,7 +265,7 @@ public class AvatarWindowHandler : MonoBehaviour
         }
 
         // Drag Logic using X11 Mouse Position
-        if (controller.isDragging && !wasDragging)
+        if (IsDragging && !wasDragging)
         {
             var cp = WindowManager.Instance.GetMousePosition();
             _dragStartCursorX = (int)cp.x; 
@@ -243,7 +276,7 @@ public class AvatarWindowHandler : MonoBehaviour
             _canSitHold = false;
         }
 
-        if (controller.isDragging)
+        if (IsDragging)
         {
             if (!_canSitHold && _dragStartTime >= 0f && Time.unscaledTime - _dragStartTime >= minDragHoldSecondsToSit) _canSitHold = true;
         }
@@ -255,7 +288,7 @@ public class AvatarWindowHandler : MonoBehaviour
 
         if (_recentUnsnap)
         {
-            if (!controller.isDragging) _recentUnsnap = false;
+            if (!IsDragging) _recentUnsnap = false;
             else if (ComputeZoneDesktop(out _, out float py))
             {
                 int vBand = Mathf.Max(unsnapVerticalBand, ScaledProbeRadiusI());
@@ -270,27 +303,27 @@ public class AvatarWindowHandler : MonoBehaviour
             bool found = false;
             for(int i=0; i<cachedWindows.Count; i++) { if(cachedWindows[i].hwnd == snappedHWND) { found=true; break; }}
             
-            if (!found || WindowManager.Instance.IsWindowMaximized(snappedHWND) || WindowManager.Instance.IsWindowFullscreen(snappedHWND)) 
+            if (!found || (!WindowManager.IsNativeWaylandSession && (WindowManager.Instance.IsWindowMaximized(snappedHWND) || WindowManager.Instance.IsWindowFullscreen(snappedHWND))))
             { 
-                ClearSnapAndHide(); 
+                ClearSnapAndHide(reason:"support-unavailable");
                 handled = true; 
             }
             // Check visibility directly via X11
-            if (!handled && !WindowManager.Instance.IsWindowVisible(snappedHWND, true)) { ClearSnapAndHide(); }
+            if (!handled && !WindowManager.IsNativeWaylandSession && !WindowManager.Instance.IsWindowVisible(snappedHWND, true)) { ClearSnapAndHide(); }
         }
 
-        if (controller.isDragging)
+        if (IsDragging)
         {
-            if (snappedHWND == IntPtr.Zero) { if (_canSitHold && DraggedPastSnapThreshold()) TrySnap(); }
-            else if (!IsStillNearSnappedWindow()) { SetGuardZoneFromCurrent(); ClearSnapAndHide(true); }
+            if (snappedHWND == IntPtr.Zero) { if (_canSitHold && DraggedPastSnapThreshold()) TrySnap(); else TraceSit(_canSitHold?"movement-threshold":"hold-time"); }
+            else if (!IsStillNearSnappedWindow()) { SetGuardZoneFromCurrent(); ClearSnapAndHide(true,"drag-away"); }
             else FollowSnapped(true);
         }
-        else if (!controller.isDragging && snappedHWND != IntPtr.Zero) FollowSnapped(false);
+        else if (!IsDragging && snappedHWND != IntPtr.Zero) FollowSnapped(false);
         
         if (animator.GetBool("isBigScreenAlarm"))
         {
             if (isWindowSitNow) animator.SetBool("isWindowSit", false);
-            ClearSnapAndHide();
+            ClearSnapAndHide(reason:"big-screen-mode");
         }
 
         if (snappedHWND != IntPtr.Zero && _postSettleRecalib)
@@ -298,7 +331,7 @@ public class AvatarWindowHandler : MonoBehaviour
             if (_postSettleFrames > 0) _postSettleFrames--;
             else
             {
-                if (WindowManager.Instance.GetWindowRect(snappedHWND, out RectInt r))
+                if (GetRect(snappedHWND, out Rect r))
                 {
                     RECT tr = RECT.FromRect(r);
                     CalibrateSeatAnchorToDesktopY(tr.Top + seatOffsetPx);
@@ -315,7 +348,8 @@ public class AvatarWindowHandler : MonoBehaviour
                 _postSettleRecalib = false;
             }
         }
-        wasDragging = controller.isDragging;
+        if (!IsDragging) TraceSit(snappedHWND!=IntPtr.Zero?"seated":"not-dragging");
+        wasDragging = IsDragging;
     }
 
     void LateUpdate() { UpdateOccluderQuadsFrameSync(); }
@@ -339,8 +373,25 @@ public class AvatarWindowHandler : MonoBehaviour
     }
 
     float ScaleFactor() => boneHips != null ? boneHips.lossyScale.magnitude : Mathf.Max(0.0001f, transform.lossyScale.magnitude);
-    int ScaledProbeRadiusI() => Mathf.Max(1, Mathf.RoundToInt(probeRadiusPx * ScaleFactor()));
-    float ScaledProbeRadiusF() => probeRadiusPx * ScaleFactor();
+    int ScaledProbeRadiusI() => Mathf.Max(1, Mathf.RoundToInt(ScaledProbeRadiusF()));
+    float ScaledProbeRadiusF()
+    {
+        if (!WindowManager.IsNativeWaylandSession) return probeRadiusPx * ScaleFactor();
+        if (!ComputeZoneDesktop(out float x,out float y)) return 40f;
+        return NativeProbeRadius(desktop,new Vector2(x,y));
+    }
+
+    // Desktop coordinates and output geometry are logical pixels. Selecting the
+    // probe's output also handles negative origins and straddling pet surfaces.
+    public static float NativeProbeRadius(DesktopSnapshot snapshot, Vector2 probe)
+    {
+        var output=snapshot.Outputs.FirstOrDefault(o=>o.Rect.Contains(probe)) ??
+            snapshot.Outputs.OrderBy(o=>{
+                var closest=new Vector2(Mathf.Clamp(probe.x,o.Rect.xMin,o.Rect.xMax),Mathf.Clamp(probe.y,o.Rect.yMin,o.Rect.yMax));
+                return (probe-closest).sqrMagnitude;
+            }).FirstOrDefault();
+        return output==null?40f:Mathf.Max(1f,40f*output.Rect.height/1440f);
+    }
     float ScaledGuardRadiusF() => probeGuardPx * ScaleFactor();
     Vector3 GetHipWorld() => boneHips != null ? boneHips.position : transform.position;
     bool ComputeZoneDesktop(out float px, out float py) => ComputeDesktopFromWorld(GetProbeWorld(), out px, out py);
@@ -353,7 +404,7 @@ public class AvatarWindowHandler : MonoBehaviour
         
         // On X11, Unity Window Client Rect is basically the window rect (decorations are handled by WM)
         // But for screen mapping, we need the window's position on screen.
-        if (!WindowManager.Instance.GetWindowRect(unityHWND, out RectInt uRect)) return false;
+        if (!GetRect(unityHWND, out Rect uRect)) return false;
         
         RECT uCli = RECT.FromRect(uRect);
         _haveUnityCli = true; _lastUnityCli = uCli;
@@ -378,6 +429,24 @@ public class AvatarWindowHandler : MonoBehaviour
         return true;
     }
 
+    bool GetRect(IntPtr id, out Rect rect)
+    {
+        if (id==unityHWND) return WindowManager.Instance.TryGetVisiblePetRect(out rect);
+        if (WindowManager.IsNativeWaylandSession) {
+            if (desktop.TryGet(id,out var w)) { rect=w.Rect; return true; }
+            rect=default; return false;
+        }
+        bool ok=WindowManager.Instance.GetWindowRect(id,out var r);
+        rect=new Rect(r.x,r.y,r.width,r.height); return ok;
+    }
+
+    // Copy at capture time, never consult a newer snapshot during GPU readback.
+    public Rect[] CaptureOcclusion()
+    {
+        if (!WindowManager.IsNativeWaylandSession || snappedHWND==IntPtr.Zero || !desktop.Fresh) return Array.Empty<Rect>();
+        return activeOccluders.Select(w=>new Rect(w.rect.Left,w.rect.Top,w.rect.Right-w.rect.Left,w.rect.Bottom-w.rect.Top)).ToArray();
+    }
+
     void CacheRigRefs()
     {
         if (animator != null && animator.isHuman)
@@ -399,16 +468,18 @@ public class AvatarWindowHandler : MonoBehaviour
     // Simplification for Linux: We trust WindowManager's visible list and Type check.
     bool IsSameProcessWindow(IntPtr hWnd)
     {
+        if (WindowManager.IsNativeWaylandSession) return desktop.TryGet(hWnd,out var window) && window.Own;
         int pid = WindowManager.Instance.GetWindowPid(hWnd);
         return pid == _currentPid;
     }
 
-    void ClearSnapAndHide(bool fromUnsnap = false)
+    void ClearSnapAndHide(bool fromUnsnap = false, [System.Runtime.CompilerServices.CallerMemberName] string reason = "unknown")
     {
+        if (snappedHWND!=IntPtr.Zero) TraceSit("detach:"+reason);
         _havePrevSnapRect = false;
         _snapSmoothingActive = false;
         _snapVelX = _snapVelY = 0f;
-        if (controller != null && controller.isDragging) _recentUnsnap = true;
+        if (controller != null && IsDragging) _recentUnsnap = true;
         if (fromUnsnap) _unsnapCooldownUntil = Time.unscaledTime + Mathf.Max(0f, unsnapCooldownSeconds);
         snappedHWND = IntPtr.Zero;
         seatCalibrated = false;
@@ -422,6 +493,17 @@ public class AvatarWindowHandler : MonoBehaviour
     void UpdateCachedWindows()
     {
         cachedWindows.Clear();
+        if (WindowManager.IsNativeWaylandSession) {
+            visibleWindows.Clear(); _currentStackingList.Clear();
+            foreach (var w in desktop.Windows) {
+                _currentStackingList.Add(w.Id);
+                if (!w.Visible || w.Own || w.Desktop) continue;
+                var entry=new WindowEntry { hwnd=w.Id, rect=RECT.FromRect(w.Rect), isTaskbar=w.Dock };
+                visibleWindows.Add(entry);
+                if (w.SeatEligible) cachedWindows.Add(entry);
+            }
+            return;
+        }
         // Get Z-ordered list (bottom to top usually in X11 stacking lists)
         _currentStackingList = WindowManager.Instance.GetClientStackingList(); 
         
@@ -430,7 +512,7 @@ public class AvatarWindowHandler : MonoBehaviour
         foreach(var hWnd in _currentStackingList)
         {
             if (hWnd == unityHWND) continue;
-            if (!WindowManager.Instance.GetWindowRect(hWnd, out RectInt r)) continue;
+            if (!GetRect(hWnd, out Rect r)) continue;
             if (!WindowManager.Instance.IsWindowVisible(hWnd, !SaveLoadHandler.Instance.data.isTopmost)) continue;
             
             if (IsSameProcessWindow(hWnd)) continue;
@@ -452,19 +534,22 @@ public class AvatarWindowHandler : MonoBehaviour
     void RebuildActiveOccluders()
     {
         activeOccluders.Clear();
-        for (int i = 0; i < cachedWindows.Count && activeOccluders.Count < maxOtherQuads; i++)
+        var candidates=WindowManager.IsNativeWaylandSession?visibleWindows:cachedWindows;
+        for (int n = 0; n < candidates.Count; n++)
         {
-            var w = cachedWindows[i];
+            if (!WindowManager.IsNativeWaylandSession && activeOccluders.Count>=maxOtherQuads) break;
+            int i=WindowManager.IsNativeWaylandSession?candidates.Count-1-n:n;
+            var w = candidates[i];
             if (w.hwnd == unityHWND || w.hwnd == snappedHWND || IsSameProcessWindow(w.hwnd)) continue;
             
             // X11 Occlusion Check: Is 'w' above 'snappedHWND'?
-            if (!(w.isTaskbar || IsAboveInZOrder(w.hwnd, snappedHWND))) continue;
+            if (!(IsAboveInZOrder(w.hwnd, snappedHWND) || (!WindowManager.IsNativeWaylandSession && w.isTaskbar))) continue;
             
             activeOccluders.Add(w);
         }
     }
 
-    bool IsSitEligibleWindow(IntPtr hWnd, RectInt r)
+    bool IsSitEligibleWindow(IntPtr hWnd, Rect r)
     {
         if (r.width < 200 || r.height < 60) return false;
         
@@ -480,25 +565,55 @@ public class AvatarWindowHandler : MonoBehaviour
         return true;
     }
 
+    bool HasRoomAboveSeat(float x,float top)
+    {
+        if (targetCamera==null || !WindowManager.Instance.TryGetVisiblePetRect(out var pet)) return false;
+        var bounds=GetCombinedWorldBounds();
+        float highest=targetCamera.WorldToScreenPoint(GetProbeWorld()).y;
+        float probeY=highest;
+        for (int corner=0;corner<8;corner++) {
+            var point=new Vector3((corner&1)==0?bounds.min.x:bounds.max.x,
+                (corner&2)==0?bounds.min.y:bounds.max.y,(corner&4)==0?bounds.min.z:bounds.max.z);
+            var projected=targetCamera.WorldToScreenPoint(point);
+            if (projected.z>0) highest=Mathf.Max(highest,projected.y);
+        }
+        float needed=Mathf.Max(1,(highest-probeY)*pet.height/Mathf.Max(1,targetCamera.pixelHeight));
+        diagnosticRoom=needed;
+        return desktop.Outputs.Any(o=>x>=o.Rect.xMin && x<o.Rect.xMax && top>=o.Rect.yMin+needed && top<o.Rect.yMax);
+    }
+
+    enum SeatDecision { Accepted, DesktopUnavailable, Ineligible, OutsideRadius, InsufficientRoom, Occluded }
+
+    SeatDecision EvaluateNativeSeat(IntPtr target, Vector2 probe, float radius)
+    {
+        if (!desktop.Fresh) return SeatDecision.DesktopUnavailable;
+        if (!desktop.TryGet(target,out var window) || !window.SeatEligible || target==unityHWND)
+            return SeatDecision.Ineligible;
+        if (probe.x<window.Rect.xMin || probe.x>window.Rect.xMax || Mathf.Abs(probe.y-window.Rect.yMin)>radius)
+            return SeatDecision.OutsideRadius;
+        if (!HasRoomAboveSeat(probe.x,window.Rect.yMin)) return SeatDecision.InsufficientRoom;
+        return IsOccludedByHigherWindowsAtPoint(target,probe.x,window.Rect.yMin)?SeatDecision.Occluded:SeatDecision.Accepted;
+    }
+
     void TrySnap()
     {
-        if (Time.unscaledTime < _unsnapCooldownUntil) return;
+        if (Time.unscaledTime < _unsnapCooldownUntil) { TraceSit("cooldown"); return; }
         if (IsSitBlocked()) return;
         
         if (useGuardZone && _guardZoneActive && ComputeZoneDesktop(out float gx, out float gy))
         {
             float dx = gx - _guardCenterDesktop.x;
             float dy = gy - _guardCenterDesktop.y;
-            if (dx * dx + dy * dy < _guardRadiusSq) return;
+            if (dx * dx + dy * dy < _guardRadiusSq) { TraceSit("guard-zone"); return; }
             _guardZoneActive = false;
         }
 
-        if (!ComputeZoneDesktop(out float px, out float py)) return;
+        if (!ComputeZoneDesktop(out float px, out float py)) { TraceSit("projection-failed"); return; }
         
         if (_recentUnsnap)
         {
             int vBlock = Mathf.Max(unsnapVerticalBand, ScaledProbeRadiusI());
-            if (Mathf.Abs(py - _lastSnapTopY) < vBlock) return;
+            if (Mathf.Abs(py - _lastSnapTopY) < vBlock) { TraceSit("unsnap-band"); return; }
         }
 
         int spr = ScaledProbeRadiusI();
@@ -509,23 +624,32 @@ public class AvatarWindowHandler : MonoBehaviour
         // GetClientStackingList returns Bottom -> Top.
         // So we iterate cachedWindows backwards (if it was populated from StackingList directly)
         
+        string rejection=cachedWindows.Count==0?"no-eligible-seats":"outside-snap-radius";
+        diagnosticRoom=0; diagnosticBlocker="none";
         for (int i = cachedWindows.Count - 1; i >= 0; i--)
         {
             var win = cachedWindows[i];
             if (win.hwnd == unityHWND) continue;
             
-            int left = win.rect.Left, right = win.rect.Right, top = win.rect.Top;
+            float left = win.rect.Left, right = win.rect.Right, top = win.rect.Top;
             
-            if (!(px >= left && px <= right)) continue;
-            if (Mathf.Abs(py - top) > sprF) continue;
-            
-            if (IsSameProcessWindow(win.hwnd)) continue;
-            
-            // Occlusion Check on cursor point
-            if (IsOccludedByHigherWindowsAtPoint(win.hwnd, Mathf.RoundToInt(px), Mathf.RoundToInt(py))) continue;
+            if (WindowManager.IsNativeWaylandSession)
+            {
+                var decision=EvaluateNativeSeat(win.hwnd,new Vector2(px,py),sprF);
+                if (decision!=SeatDecision.Accepted) {
+                    if (decision!=SeatDecision.OutsideRadius || rejection=="outside-snap-radius") rejection=decision.ToString();
+                    continue;
+                }
+            }
+            else
+            {
+                if (!(px >= left && px <= right) || Mathf.Abs(py-top)>sprF || IsSameProcessWindow(win.hwnd)) continue;
+                if (IsOccludedByHigherWindowsAtPoint(win.hwnd,Mathf.RoundToInt(px),Mathf.RoundToInt(py))) continue;
+            }
 
             lastDesktopPosition = WindowManager.Instance.GetWindowPosition();
             snappedHWND = win.hwnd;
+            TraceSit("attached");
             _guardZoneActive = false;
 
             animator.SetBool("isWindowSit", true);
@@ -558,10 +682,11 @@ public class AvatarWindowHandler : MonoBehaviour
             RebuildActiveOccluders(); 
             UpdateOccluderQuadsFrameSync();
             
-            if (WindowManager.Instance.GetWindowRect(win.hwnd, out RectInt tr)) PinToTarget(RECT.FromRect(tr)); 
+            if (GetRect(win.hwnd, out Rect tr)) PinToTarget(RECT.FromRect(tr));
             else PinToTarget(win.rect);
             return;
         }
+        TraceSit(rejection);
     }
 
     void CancelSnapSmoothingIfTargetMoved(RECT tr)
@@ -576,7 +701,7 @@ public class AvatarWindowHandler : MonoBehaviour
 
     bool CalibrateSeatAnchorToDesktopY(float targetDesktopY)
     {
-        if (targetCamera == null || !WindowManager.Instance.GetWindowRect(unityHWND, out RectInt uRect)) return false;
+        if (targetCamera == null || !GetRect(unityHWND, out Rect uRect)) return false;
         RECT uCli = RECT.FromRect(uRect);
 
         Matrix4x4 inv = transform.worldToLocalMatrix;
@@ -639,7 +764,7 @@ public class AvatarWindowHandler : MonoBehaviour
 
     void FollowSnapped(bool dragging)
     {
-        if (snappedHWND == IntPtr.Zero || !WindowManager.Instance.GetWindowRect(snappedHWND, out RectInt r)) { ClearSnapAndHide(); return; }
+        if (snappedHWND == IntPtr.Zero || !GetRect(snappedHWND, out Rect r)) { ClearSnapAndHide(reason:"support-removed"); return; }
         RECT tr = RECT.FromRect(r);
         
         CancelSnapSmoothingIfTargetMoved(tr);
@@ -655,28 +780,29 @@ public class AvatarWindowHandler : MonoBehaviour
     void PinToTarget(RECT r)
     {
         if (!ComputeSeatDesktop(out float px, out float py)) return;
-        int left = r.Left, right = r.Right, top = r.Top;
+        float left = r.Left, right = r.Right, top = r.Top;
         float desiredPX = left + snapFraction * Mathf.Max(1, right - left);
         float desiredPY = top + seatOffsetPx;
-        int dx = Mathf.RoundToInt(desiredPX - px);
-        int dy = Mathf.RoundToInt(desiredPY - py);
+        float dx = desiredPX - px;
+        float dy = desiredPY - py;
+        if (!WindowManager.IsNativeWaylandSession) { dx=Mathf.RoundToInt(dx); dy=Mathf.RoundToInt(dy); }
 
-        WindowManager.Instance.GetWindowRect(unityHWND, out RectInt urRect);
+        GetRect(unityHWND, out Rect urRect);
         RECT ur = RECT.FromRect(urRect);
         
-        int w = ur.Right - ur.Left, h = ur.Bottom - ur.Top;
-        int targetX = ur.Left + dx, targetY = ur.Top + dy;
+        float w = ur.Right - ur.Left, h = ur.Bottom - ur.Top;
+        float targetX = ur.Left + dx, targetY = ur.Top + dy;
 
         if (!_snapSmoothingActive || !enableSnapSmoothing)
         {
-            if (dx != 0 || dy != 0) WindowManager.Instance.SetWindowPosition(targetX, targetY);
+            if (dx != 0 || dy != 0) WindowManager.Instance.SetVisiblePetPosition(new Vector2(targetX, targetY));
             return;
         }
         float dt = Time.unscaledDeltaTime;
         float nextX = Mathf.SmoothDamp(ur.Left, targetX, ref _snapVelX, snapSmoothingTime, snapSmoothingMaxSpeed, dt);
         float nextY = Mathf.SmoothDamp(ur.Top, targetY, ref _snapVelY, snapSmoothingTime, snapSmoothingMaxSpeed, dt);
 
-        if (controller != null && controller.isDragging)
+        if (controller != null && IsDragging)
         {
             float predictedSeatY = py + (nextY - ur.Top);
             float afterError = predictedSeatY - desiredPY;
@@ -688,9 +814,10 @@ public class AvatarWindowHandler : MonoBehaviour
             }
         }
 
-        int nx = Mathf.RoundToInt(nextX), ny = Mathf.RoundToInt(nextY);
+        float nx = nextX, ny = nextY;
+        if (!WindowManager.IsNativeWaylandSession) { nx=Mathf.RoundToInt(nx); ny=Mathf.RoundToInt(ny); }
         if (Mathf.Abs(targetX - nx) <= 1 && Mathf.Abs(targetY - ny) <= 1) { nx = targetX; ny = targetY; _snapSmoothingActive = false; _snapVelX = _snapVelY = 0f; }
-        if (nx != ur.Left || ny != ur.Top) WindowManager.Instance.SetWindowPosition(nx, ny);
+        if (nx != ur.Left || ny != ur.Top) WindowManager.Instance.SetVisiblePetPosition(new Vector2(nx, ny));
     }
 
     bool IsStillNearSnappedWindow()
@@ -706,17 +833,24 @@ public class AvatarWindowHandler : MonoBehaviour
 
         // Re-query rect to be safe or use cached? Better use cached from enum for consistency or query fresh if needed.
         // Let's query fresh for "StillNear" check to be responsive.
-        if (WindowManager.Instance.GetWindowRect(snappedHWND, out RectInt r)) win.rect = RECT.FromRect(r);
+        if (GetRect(snappedHWND, out Rect r)) win.rect = RECT.FromRect(r);
         else return false;
 
+        if (WindowManager.IsNativeWaylandSession)
+        {
+            if (!ComputeSeatDesktop(out float seatX,out _)) return false;
+            var cursor=WindowManager.Instance.GetMousePosition();
+            return seatX>=win.rect.Left && seatX<=win.rect.Right &&
+                Mathf.Abs(cursor.y-_snapCursorY)<=Mathf.Max(unsnapVerticalBand,ScaledProbeRadiusI());
+        }
         if (!ComputeZoneDesktop(out float px, out float py)) return true;
-        int left = win.rect.Left, right = win.rect.Right, top = win.rect.Top;
+        float left = win.rect.Left, right = win.rect.Right, top = win.rect.Top;
         
         bool hitHoriz = px >= left && px <= right;
         bool hitVert = Mathf.Abs(py - top) <= Mathf.Max(unsnapVerticalBand, ScaledProbeRadiusI());
         if (!hitHoriz || !hitVert) return false;
 
-        if (controller.isDragging && animator.GetBool("isWindowSit"))
+        if (IsDragging && animator.GetBool("isWindowSit"))
         {
             var cp = WindowManager.Instance.GetMousePosition();
             int vBand = Mathf.Max(unsnapVerticalBand, ScaledProbeRadiusI());
@@ -734,7 +868,7 @@ public class AvatarWindowHandler : MonoBehaviour
     }
     
     // Check if 'hwnd' is occluded by any window that is HIGHER in the z-order
-    bool IsOccludedByHigherWindowsAtPoint(IntPtr hwnd, int x, int y)
+    bool IsOccludedByHigherWindowsAtPoint(IntPtr hwnd, float x, float y)
     {
         // _currentStackingList is Bottom -> Top.
         // Find index of 'hwnd'
@@ -747,14 +881,15 @@ public class AvatarWindowHandler : MonoBehaviour
             IntPtr h = _currentStackingList[i];
             if (h == unityHWND || IsSameProcessWindow(h)) continue;
             
-            if (!WindowManager.Instance.GetWindowRect(h, out RectInt r)) continue;
-            if (!WindowManager.Instance.IsWindowVisible(h)) continue;
+            if (!GetRect(h, out Rect r)) continue;
+            if (WindowManager.IsNativeWaylandSession ? (!desktop.TryGet(h,out var dw) || !dw.Visible || dw.Desktop) : !WindowManager.Instance.IsWindowVisible(h)) continue;
 
             // X11 Rect is (x, y, w, h). 
             // Simple point in rect check
             bool hit = x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height;
             if (!hit) continue;
             
+            diagnosticBlocker=WindowManager.Instance.GetClassName(h);
             // On Windows there were complex alpha checks here. 
             // For X11, if it's in the stacking list and visible, it's likely occluding.
             return true;
@@ -837,13 +972,13 @@ public class AvatarWindowHandler : MonoBehaviour
     void UpdateOccluderQuadsFrameSync()
     {
         if (_occluderSharedMat == null || targetCamera == null || snappedHWND == IntPtr.Zero) { SetTargetQuadActive(false); SetOtherQuadsActive(0); return; }
-        if (!_haveUnityCli && !WindowManager.Instance.GetWindowRect(unityHWND, out RectInt uRect)) { SetTargetQuadActive(false); SetOtherQuadsActive(0); return; }
-        if (!_haveUnityCli) _lastUnityCli = RECT.FromRect(WindowManager.Instance.GetWindowRect(unityHWND, out RectInt r) ? r : new RectInt());
+        if (!GetRect(unityHWND, out Rect uRect)) { SetTargetQuadActive(false); SetOtherQuadsActive(0); return; }
+        _lastUnityCli = RECT.FromRect(uRect);
 
         RECT uCli = _lastUnityCli;
         Rect unityClient = new Rect(uCli.Left, uCli.Top, uCli.Right - uCli.Left, uCli.Bottom - uCli.Top);
 
-        if (snappedHWND != unityHWND && WindowManager.Instance.GetWindowRect(snappedHWND, out RectInt rTr))
+        if (snappedHWND != unityHWND && GetRect(snappedHWND, out Rect rTr))
         {
             RECT tr = RECT.FromRect(rTr);
             Rect tInter = Intersect(new Rect(tr.Left, tr.Top, tr.Right - tr.Left, tr.Bottom - tr.Top), unityClient);
@@ -858,11 +993,12 @@ public class AvatarWindowHandler : MonoBehaviour
         }
         else SetTargetQuadActive(false);
 
+        if (WindowManager.IsNativeWaylandSession) { SetOtherQuadsActive(0); return; }
         int outCount = 0;
         for (int i = 0; i < activeOccluders.Count && outCount < maxOtherQuads; i++)
         {
             var w = activeOccluders[i];
-            if (!WindowManager.Instance.GetWindowRect(w.hwnd, out RectInt wrct)) continue;
+            if (!GetRect(w.hwnd, out Rect wrct)) continue;
             
             // w.hwnd Rect is x,y,w,h
             Rect inter = Intersect(new Rect(wrct.x, wrct.y, wrct.width, wrct.height), unityClient);

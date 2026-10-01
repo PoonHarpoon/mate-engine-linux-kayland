@@ -33,7 +33,7 @@ public class AvatarBigScreenTouchHandler : MonoBehaviour
 
         if (IsBigScreenActive())
         {
-            if (Input.GetMouseButton(0))
+            if (MateeInput.GetMouseButton(0))
             {
                 HandleSpringBoneTouch();
                 if (hasHairStrokeParam) avatarAnimator.SetBool(HairStrokeHash, true);

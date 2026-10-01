@@ -9,7 +9,7 @@ build/dialog: dialog.c
 	mkdir -p build
 	cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make
 build/dialog.bin.o: build/dialog
-	$(LD) -r -b binary -o build/dialog.bin.o build/dialog
+	$(LD) -r -b binary -z noexecstack -o build/dialog.bin.o build/dialog
 build/library.o: library.c library.h
 	$(CC) $(COPTS) -o build/library.o -c library.c -fPIC
 build/libStandaloneFileBrowser.so: build/dialog.bin.o build/library.o

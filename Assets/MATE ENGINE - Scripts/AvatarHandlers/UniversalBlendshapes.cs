@@ -15,6 +15,7 @@ public class UniversalBlendshapes : MonoBehaviour
     private class BlendState { public float value, lastInput, lastUpdateTime, holdUntil; }
 
     private readonly Dictionary<string, BlendState> states = new();
+    private readonly Dictionary<string, (string key, float value)> manualOverrides = new();
     private readonly List<KeyValuePair<BlendShapeKey, float>> reusableList = new();
 
     private static readonly string[] keys = new[]
@@ -78,6 +79,9 @@ public class UniversalBlendshapes : MonoBehaviour
             UpdateState(key, input, now, dt);
         }
 
+        foreach (var manual in manualOverrides.Values)
+            if (states.TryGetValue(manual.key, out var state)) state.value = manual.value;
+
         if (proxy0 != null)
         {
             reusableList.Clear();
@@ -89,6 +93,12 @@ public class UniversalBlendshapes : MonoBehaviour
             }
             proxy0.SetValues(reusableList);
             proxy0.Apply();
+            foreach (var manual in manualOverrides.Values)
+            {
+                bool standard = false;
+                for (int i = 0; i < keys.Length; i++) if (keys[i] == manual.key) { standard = true; break; }
+                if (!standard) proxy0.ImmediatelySetValue(BlendShapeKey.CreateUnknown(manual.key), manual.value);
+            }
         }
         else if (expr1 != null)
         {
@@ -101,8 +111,19 @@ public class UniversalBlendshapes : MonoBehaviour
                     expr1.SetWeight(exprKey, states[key].value);
                 }
             }
+            foreach (var manual in manualOverrides.Values)
+                if (vrm1ExpressionKeyMap.TryGetValue(manual.key, out var key)) expr1.SetWeight(key, manual.value);
         }
     }
+
+    public void SetManualOverride(string id, string key, float value, bool held)
+    {
+        if (held) manualOverrides[id] = (key, value);
+        else manualOverrides.Remove(id);
+    }
+
+    public void ReleaseManualOverride(string id) => manualOverrides.Remove(id);
+    public void ClearManualOverrides() => manualOverrides.Clear();
 
     private float GetInputValue(int i) => i switch
     {

@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using Newtonsoft.Json;
+using Matee.AvatarControls;
 
 public class BlendshapeManager : MonoBehaviour
 {
@@ -34,7 +35,22 @@ public class BlendshapeManager : MonoBehaviour
 
     private void OnEnable()
     {
+        AvatarControlRuntime.Bound += OnAvatarBound;
         StartCoroutine(ScanLoop());
+    }
+
+    private void OnDisable()
+    {
+        AvatarControlRuntime.Bound -= OnAvatarBound;
+        StopAllCoroutines();
+    }
+
+    private void OnAvatarBound(Manifest manifest)
+    {
+        foreach (var go in activeBlocks) if (go != null) Destroy(go);
+        activeBlocks.Clear();
+        currentRefs.Clear();
+        currentSignature = "";
     }
 
     private IEnumerator ScanLoop()
@@ -76,6 +92,7 @@ public class BlendshapeManager : MonoBehaviour
 
     private void BuildRefsIfChanged()
     {
+        if (AvatarControlRuntime.Current != null) return;
         var root = ResolveActiveAvatarRoot(out string avatarNameGuess);
         if (string.IsNullOrEmpty(avatarNameGuess))
             avatarNameGuess = "DefaultAvatar";

@@ -93,6 +93,8 @@ public class PetVoiceReactionHandler : MonoBehaviour
     FieldInfo bigScreenFlag;
     bool bigScreenBlocked;
     float nextCheck;
+    readonly bool diagnostics = Environment.GetEnvironmentVariable("MATEENGINE_PET_DIAGNOSTICS") == "1";
+    float nextDiagnostic;
 
     void Start()
     {
@@ -101,8 +103,25 @@ public class PetVoiceReactionHandler : MonoBehaviour
 
     public void SetAnimator(Animator a)
     {
+        if (avatarAnimator == a && hasSetup) return;
+        ClearPool();
+        foreach (var region in regions)
+        {
+            region.wasHovering = false;
+            ResetPat(region);
+        }
         avatarAnimator = a;
         hasSetup = false;
+    }
+
+    void OnDestroy() => ClearPool();
+
+    void ClearPool()
+    {
+        foreach (var instances in pool.Values)
+            foreach (var instance in instances)
+                if (instance.obj) Destroy(instance.obj);
+        pool.Clear();
     }
 
     void TrySetup()
@@ -188,7 +207,7 @@ public class PetVoiceReactionHandler : MonoBehaviour
             nextCheck = Time.time + checkInterval;
         }
 
-        Vector2 mouse = Input.mousePosition;
+        Vector2 mouse = MateeInput.MousePosition;
         bool menuBlocked = MenuActions.IsReactionBlocked();
         bool occluded = blockWhenCovered && IsOccludedByOS();
         bool anyBlocked = menuBlocked || bigScreenBlocked || occluded;
@@ -213,6 +232,11 @@ public class PetVoiceReactionHandler : MonoBehaviour
 
             bool genderAllowed = IsRegionAllowedByGender(region);
             bool stateOk = IsStateAllowedForRegion(region);
+            if (diagnostics && Time.unscaledTime >= nextDiagnostic && dist2 <= radius2 * 4f)
+            {
+                nextDiagnostic = Time.unscaledTime + 1f;
+                Debug.Log($"Pet region '{region.name}': pointerInside={MateeInput.PointerInside} hover={hovering} state={avatarAnimator.GetCurrentAnimatorStateInfo(0).shortNameHash} stateAllowed={stateOk} menuBlocked={menuBlocked} bigScreenBlocked={bigScreenBlocked} occluded={occluded} genderAllowed={genderAllowed} patDegrees={region.patCircleAccum:F0} patDistance={region.patWiggleAccumDist:F0} patChanges={region.patWiggleChanges} effectEnabled={GlobalHoverObjectsEnabled && region.enableHoverObject}");
+            }
             
             if (hovering && !region.wasHovering && stateOk && !anyBlocked && genderAllowed)
             {
@@ -223,10 +247,11 @@ public class PetVoiceReactionHandler : MonoBehaviour
                     region.wasHovering = true;
                     TriggerAnim(region, true);
                     PlayRandomVoice(region);
+                    if (diagnostics) Debug.Log($"Pet region '{region.name}' triggered; hoverAnimation={region.hoverAnimationParameter} voiceAvailable={region.voiceClips.Count > 0} effectAvailable={GlobalHoverObjectsEnabled && region.enableHoverObject && region.hoverObject != null}.");
 
                     if (GlobalHoverObjectsEnabled && region.enableHoverObject && region.hoverObject != null)
                     {
-                        var list = pool[region];
+                        if (!pool.TryGetValue(region, out var list)) continue;
                         HoverInstance chosen = null;
                         for (int i = 0; i < list.Count; i++)
                             if (!list[i].obj.activeSelf) { chosen = list[i]; break; }
@@ -242,7 +267,13 @@ public class PetVoiceReactionHandler : MonoBehaviour
                                 chosen.obj.transform.position = world;
                             chosen.obj.SetActive(false);
                             chosen.obj.SetActive(true);
+                            foreach (var particles in chosen.obj.GetComponentsInChildren<ParticleSystem>(true))
+                            {
+                                particles.Clear(true);
+                                particles.Play(true);
+                            }
                             chosen.despawnTime = Time.time + region.despawnAfterSeconds;
+                            if (diagnostics) Debug.Log($"Pet region '{region.name}' restarted effect '{chosen.obj.name}'.");
                         }
                     }
                 }
@@ -414,6 +445,8 @@ public class PetVoiceReactionHandler : MonoBehaviour
 
     bool IsOccludedByOS()
     {
+        if (WindowManager.IsNativeWaylandSession && MateeInput.PresenterActive)
+            return !MateeInput.PointerInside;
         ResolveWindowHandle();
         if (_unityHwnd == IntPtr.Zero) return false;
         if (!WindowManager.Instance.GetMousePosition(out var p)) return false;

@@ -4,6 +4,7 @@ using System.IO;
 using Newtonsoft.Json;
 using System;
 
+[DefaultExecutionOrder(-200)]
 public class SaveLoadHandler : MonoBehaviour
 {
     public static SaveLoadHandler Instance { get; private set; }
@@ -48,6 +49,23 @@ public class SaveLoadHandler : MonoBehaviour
         }
 
         LoadFromDisk();
+        if (WindowManager.IsNativeWaylandSession)
+        {
+            // Restore Unity's render surface before window and presenter setup.
+            // Unity's player prefs can otherwise carry an oversized window from
+            // an earlier run even when Mate Engine's saved size is Normal.
+            Vector2Int startupSize = data.windowSizeState switch
+            {
+                SettingsData.WindowSizeState.Big => new Vector2Int(2048, 1536),
+                SettingsData.WindowSizeState.Small => new Vector2Int(768, 512),
+                _ => new Vector2Int(1536, 1024)
+            };
+            if (Screen.width != startupSize.x || Screen.height != startupSize.y)
+            {
+                Debug.Log($"Native Wayland startup size: Unity {Screen.width}x{Screen.height}, settings {startupSize.x}x{startupSize.y}.");
+                Screen.SetResolution(startupSize.x, startupSize.y, FullScreenMode.Windowed);
+            }
+        }
         ApplyAllSettingsToAllAvatars();
 
         var theme = FindFirstObjectByType<ThemeManager>();

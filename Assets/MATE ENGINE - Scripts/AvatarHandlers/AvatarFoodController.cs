@@ -95,7 +95,7 @@ public class AvatarFoodController : MonoBehaviour
         if (!featureEnabled) DeactivateAll();
         TrySetup();
         DeactivateAll();
-        prevMousePos = Input.mousePosition;
+        prevMousePos = MateeInput.MousePosition;
         ProbeAvatarNow();
     }
 
@@ -130,7 +130,7 @@ public class AvatarFoodController : MonoBehaviour
         }
         if (activeEntry != null && activeEntry.obj && activeEntry.followMouse)
         {
-            var mp = Input.mousePosition;
+            var mp = MateeInput.MousePosition;
             mp.z = depthZ;
             var wp = cam.ScreenToWorldPoint(mp) + activeEntry.worldOffset;
             activeEntry.obj.transform.position = wp;
@@ -143,7 +143,7 @@ public class AvatarFoodController : MonoBehaviour
     void UpdateSway()
     {
         if (!enableSway || activeEntry == null || activeEntry.obj == null) { swayWeight = Mathf.MoveTowards(swayWeight, 0f, swayBlendSpeed * Time.deltaTime); return; }
-        Vector2 m = Input.mousePosition;
+        Vector2 m = MateeInput.MousePosition;
         Vector2 md = (m - prevMousePos) * mouseSensitivity;
         prevMousePos = m;
         float dt = Time.deltaTime;
@@ -174,7 +174,7 @@ public class AvatarFoodController : MonoBehaviour
     void HeadInteractCheck()
     {
         if (!cam || !head) return;
-        Vector2 mouse = Input.mousePosition;
+        Vector2 mouse = MateeInput.MousePosition;
         Vector3 centerWorld = GetHeadCenterWorld();
         Vector2 centerScreen = cam.WorldToScreenPoint(centerWorld);
         float rPx = ComputeScreenRadiusPx(centerWorld);
@@ -299,7 +299,7 @@ public class AvatarFoodController : MonoBehaviour
     void MoveOnceToCursor()
     {
         if (activeEntry == null || cam == null) return;
-        var mp = Input.mousePosition;
+        var mp = MateeInput.MousePosition;
         mp.z = depthZ;
         var wp = cam.ScreenToWorldPoint(mp) + activeEntry.worldOffset;
         activeEntry.obj.transform.position = wp;

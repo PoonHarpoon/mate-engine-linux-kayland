@@ -40,16 +40,47 @@ public enum WindowType
     ShowBorder = 3
 }
 
+[DefaultExecutionOrder(-100)]
 public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerEnterHandler, IPointerExitHandler
 {
     public static WindowManager Instance;
-    
+    public static bool PresenterTopmost { get; private set; } = true;
+
+    public DesktopSnapshot NativeDesktop => (_windowManagerImplementation as KWinManager)?.Snapshot ?? DesktopSnapshot.Empty;
+    public bool IsDragging => _isDragging;
+    public bool NativeSitting => (_windowManagerImplementation as KWinManager)?.Sitting ?? false;
+    public bool TryGetVisiblePetRect(out Rect rect) {
+        if (IsNativeWaylandSession) {
+            if (_windowManagerImplementation is KWinManager km) return km.TryGetVisibleRect(out rect);
+            rect=default; return false;
+        }
+        bool ok=GetWindowRect(_unityWindow,out var legacy); rect=new Rect(legacy.x,legacy.y,legacy.width,legacy.height); return ok;
+    }
+    public void SetVisiblePetPosition(Vector2 position) {
+        if (IsNativeWaylandSession && _windowManagerImplementation is KWinManager km) km.SetVisiblePosition(position);
+        else SetWindowPosition(Vector2Int.RoundToInt(position));
+    }
+
+    /// <summary>
+    /// True only when the Unity player was asked to use its native Wayland backend.
+    /// A Wayland session alone is not enough: Unity otherwise may create an XWayland
+    /// window when DISPLAY is available.
+    /// </summary>
+    public static bool IsNativeWaylandSession =>
+        string.Equals(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland", StringComparison.OrdinalIgnoreCase) &&
+        (string.Equals(Environment.GetEnvironmentVariable("MATEENGINE_BACKEND"), "wayland", StringComparison.OrdinalIgnoreCase) ||
+         Environment.GetCommandLineArgs().Any(argument => string.Equals(argument, "-force-wayland", StringComparison.OrdinalIgnoreCase)));
+
     private DesktopEnvironments _currentDesktopEnv;
     private SessionTypes _currentSessionType;
 
     private Vector2Int _initialMousePos;
     private Vector2Int _initialWindowPos;
     private volatile bool _isDragging;
+    private bool _nativeKWinDrag;
+    private readonly bool _dragDiagnostics = Environment.GetEnvironmentVariable("MATEENGINE_DRAG_DIAGNOSTICS") == "1";
+    private float _dragReportStart, _dragMaxFrameMs;
+    private int _dragFrames, _dragSlowFrames;
 
     private bool _dontUpdateCursor;
     
@@ -59,7 +90,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public IntPtr RootWindow => _rootWindow;
 
-    public IntPtr UnityWindow => _unityWindow;
+    public IntPtr UnityWindow => IsNativeWaylandSession && _windowManagerImplementation is KWinManager km ? km.SelfWindow : _unityWindow;
     
     private string _compositorName;
     public string CompositorName => _compositorName ?? GetCompositorName();
@@ -85,6 +116,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                 return;
             }
             Instance = this;
+
+            DetectSession();
             
             if(_dBusConnection == null)
                 _dBusConnection = new TDBus.Connection(TDBus.Address.Session);
@@ -99,11 +132,26 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                         _windowManagerImplementation = Singleton<HyprlandManager>.Instance;
                         break;
                     case DesktopEnvironments.Kde:
-                        if (SaveLoadHandler.Instance.data.useKWinApi)
+                        // Native KDE Wayland needs KWin for the desktop-pet window
+                        // management operations that ordinary Wayland clients cannot
+                        // perform. The legacy preference remains relevant off Wayland.
+                        if (IsNativeWaylandSession || SaveLoadHandler.Instance.data.useKWinApi)
                         {
                             var km = new KWinManager(_dBusConnection, _dBusConnectionInfo);
                             await km.SetupDBus();
                             _windowManagerImplementation = km;
+                            if (IsNativeWaylandSession)
+                            {
+                                if (await km.WaitForSelfWindowAsync())
+                                {
+                                    km.SetWindowBorderless(SaveLoadHandler.Instance.data.windowType != WindowType.ShowBorder);
+                                    km.SetTopmost(SaveLoadHandler.Instance.data.isTopmost);
+                                }
+                                else
+                                {
+                                    Debug.LogWarning("KWin did not expose the native Wayland player window before the startup timeout. Window control is unavailable for this run.");
+                                }
+                            }
                         }
                         break;
                 }
@@ -118,12 +166,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                     _ => DesktopEnvironments.Unknown
                 };
             }
-            if (!Enum.TryParse(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), true, out _currentSessionType))
-            {
-                _currentSessionType = SessionTypes.Unknown;
-            }
-
-            if (_currentSessionType == SessionTypes.Wayland)
+            if (_currentSessionType == SessionTypes.Wayland && !IsNativeWaylandSession)
             {
                 // Removed _WaylandWarningPosted here because later OnEnable calls are blocked
                 Singleton<DBusNotificationHelper>.Instance.Init(_dBusConnection);
@@ -145,10 +188,28 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     private void Update()
     {
+        if (_windowManagerImplementation is KWinManager frameKWin) {
+            if (frameKWin.SampleVisibleRect()) {
+                _nativeKWinDrag=false;
+                _initialMousePos=GetMousePosition(); _initialWindowPos=GetWindowPosition(); _lastPos=_initialWindowPos;
+            }
+            if (IsNativeWaylandSession) { _unityWindow=frameKWin.SelfWindow; QueryMonitors(); }
+        }
+        if (_isDragging && _dragDiagnostics)
+        {
+            float frameMs = Time.unscaledDeltaTime * 1000f;
+            _dragFrames++;
+            if (frameMs > _dragMaxFrameMs) _dragMaxFrameMs = frameMs;
+            if (frameMs > 33.3f) _dragSlowFrames++;
+            if (Time.realtimeSinceStartup - _dragReportStart >= 2f) ReportDragFrames();
+        }
         if (_mouseOver)
             UpdateCursorState();
         if (_isDragging)
         {
+            if (_windowManagerImplementation is KWinManager seated && seated.Sitting) { seated.UpdateSeatedDrag(); return; }
+            if (_nativeKWinDrag && _windowManagerImplementation is KWinManager nativeKWin && nativeKWin.IsNativeDragPositioning)
+                return;
             var currentMousePos = GetMousePosition();
             var delta = currentMousePos - _initialMousePos;
             var newPos = _initialWindowPos + delta;
@@ -160,6 +221,12 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     private void Awake()
     {
+        DetectSession();
+        if (IsNativeWaylandSession)
+        {
+            Debug.Log("MateEngine backend request: native Wayland (-force-wayland). Required per-window KWin integration enabled.");
+            return;
+        }
         Init();
         CheckSingleInstanceForNoNetWmPidSupportCompositors();
         var pid = Process.GetCurrentProcess().Id;
@@ -182,6 +249,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         }
         ShowError($"No matching windows found for PID {pid}.");
     }
+
     
     private void CheckSingleInstanceForNoNetWmPidSupportCompositors()
     {
@@ -216,7 +284,19 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         _initialMousePos = GetMousePosition();
         _initialWindowPos = GetWindowPosition();
+        if (_windowManagerImplementation is KWinManager seated && seated.Sitting) seated.BeginSeatedDrag();
+        _lastPos = _initialWindowPos;
         _isDragging = true;
+        _nativeKWinDrag = IsNativeWaylandSession && _windowManagerImplementation is KWinManager km &&
+                          km.BeginNativeDrag(_initialWindowPos);
+        if (_dragDiagnostics)
+        {
+            _dragReportStart = Time.realtimeSinceStartup;
+            _dragMaxFrameMs = 0f;
+            _dragFrames = _dragSlowFrames = 0;
+        }
+        if (IsNativeWaylandSession)
+            Debug.Log($"Native Wayland drag started at cursor {_initialMousePos}, window {_initialWindowPos}.");
         if (_windowManagerImplementation != null)
             _windowManagerImplementation.IsDragging = true;
         UpdateCursorState();
@@ -224,10 +304,37 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public void OnPointerUp(PointerEventData eventData)
     {
+        ReleaseDragging();
+    }
+
+    private void OnApplicationFocus(bool hasFocus)
+    {
+        if (!hasFocus)
+            ReleaseDragging();
+    }
+
+    private void ReleaseDragging()
+    {
+        bool wasDragging = _isDragging;
+        if (wasDragging && _dragDiagnostics) ReportDragFrames();
         _isDragging = false;
+        if (_nativeKWinDrag && _windowManagerImplementation is KWinManager km)
+            km.EndNativeDrag();
+        _nativeKWinDrag = false;
         if (_windowManagerImplementation != null)
             _windowManagerImplementation.IsDragging = false;
         UpdateCursorState();
+        if (wasDragging && IsNativeWaylandSession)
+            Debug.Log($"Native Wayland drag ended at window {GetWindowPosition()}.");
+    }
+
+    private void ReportDragFrames()
+    {
+        if (_dragFrames > 0)
+            Debug.Log($"Wayland drag Unity frames: {_dragFrames}, over 33 ms: {_dragSlowFrames}, max {_dragMaxFrameMs:F1} ms / {(Time.realtimeSinceStartup - _dragReportStart):F1} s.");
+        _dragReportStart = Time.realtimeSinceStartup;
+        _dragMaxFrameMs = 0f;
+        _dragFrames = _dragSlowFrames = 0;
     }
 
     public void OnPointerEnter(PointerEventData eventData)
@@ -274,6 +381,15 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         _netActiveWindow = XInternAtom(_display, "_NET_ACTIVE_WINDOW", false);
         _motifHintsAtom = XInternAtom(_display, "_MOTIF_WM_HINTS", false);
         _wakeupAtom = XInternAtom(_display, "_SDL_WAKEUP", false);
+    }
+
+    private void DetectSession()
+    {
+        if (!Enum.TryParse(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), true, out _currentSessionType))
+            _currentSessionType = SessionTypes.Unknown;
+        if (!Enum.TryParse(Environment.GetEnvironmentVariable("XDG_CURRENT_DESKTOP"), true, out _currentDesktopEnv))
+            _currentDesktopEnv = _currentSessionType == SessionTypes.X11 ? DesktopEnvironments.OtherX11 :
+                _currentSessionType == SessionTypes.Wayland ? DesktopEnvironments.OtherWayland : DesktopEnvironments.Unknown;
     }
         
     private int ShowError(IntPtr display, IntPtr e)
@@ -482,6 +598,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private void Dispose()
     {
         if (_closing) return;
+        ReleaseDragging();
         _running = false;
         _closing = true;
 
@@ -575,6 +692,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public void SetWindowPosition(Vector2Int position)
     {
+        if (IsNativeWaylandSession)
+        {
+            _windowManagerImplementation?.SetWindowPosition(position);
+            return;
+        }
         if (SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls)
         { 
             SetWindowPositionLegacy(position);
@@ -582,11 +704,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         }
         if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero)
         {
-            if (_windowManagerImplementation != null)
-            {
-                _windowManagerImplementation.SetWindowPosition(position);
-                return;
-            }
             if (_netMoveResizeWindow == IntPtr.Zero)
             {
                 ShowError("Cannot find atom for _NET_MOVERESIZE_WINDOW!");
@@ -653,12 +770,18 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     
     public void SetTransientFor(IntPtr parentWindow, bool force = false)
     {
-        if (_display == IntPtr.Zero || _unityWindow == IntPtr.Zero || _closing & !force) return;
+        if (_closing & !force) return;
         if(_windowManagerImplementation != null)
         {
+            bool wasSitting=NativeSitting;
             _windowManagerImplementation.SetSnapedWindow(parentWindow);
+            if (wasSitting && parentWindow==IntPtr.Zero && _isDragging) {
+                _initialMousePos=GetMousePosition(); _initialWindowPos=GetWindowPosition();
+                _nativeKWinDrag=_windowManagerImplementation is KWinManager km && km.BeginNativeDrag(_initialWindowPos);
+            }
             return;
         }
+        if (_display == IntPtr.Zero || _unityWindow == IntPtr.Zero) return;
     
         XSetTransientForHint(_display, _unityWindow, parentWindow);
         XFlush(_display);
@@ -675,7 +798,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             return;
         }
 
-        if (_windowManagerImplementation != null && _currentDesktopEnv != DesktopEnvironments.Kde)
+        if (_windowManagerImplementation != null && (IsNativeWaylandSession || _currentDesktopEnv != DesktopEnvironments.Kde))
         {
             foreach (var m in _windowManagerImplementation.GetAllMonitors())
                 _monitors[m.Id] = m.Rect;
@@ -804,6 +927,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public void SetWindowSize(Vector2Int size)
     {
+        if (IsNativeWaylandSession)
+        {
+            _windowManagerImplementation?.SetWindowSize(size);
+            return;
+        }
         if (SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls)
         {
             SetWindowSizeLegacy(size);
@@ -874,6 +1002,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         if (_windowManagerImplementation != null)
             return _windowManagerImplementation.GetMousePosition();
+        if (IsNativeWaylandSession || _display == IntPtr.Zero)
+            return Vector2Int.zero;
         // Query mouse position
         int rootX = 0, rootY = 0;
         IntPtr rootReturn = IntPtr.Zero, childReturn = IntPtr.Zero;
@@ -897,6 +1027,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             position = _windowManagerImplementation.GetMousePosition();
             return true;
         }
+        if (IsNativeWaylandSession || _display == IntPtr.Zero)
+        {
+            position = Vector2Int.zero;
+            return false;
+        }
         // Query mouse position
         int rootX = 0, rootY = 0;
         IntPtr rootReturn = IntPtr.Zero, childReturn = IntPtr.Zero;
@@ -906,6 +1041,14 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         bool result = XQueryPointer(_display, _rootWindow, ref rootReturn, ref childReturn, ref rootX, ref rootY, ref winX, ref winY, ref maskReturn);
         position = new Vector2Int(rootX, rootY);
         return result;
+    }
+
+    public bool SetPresenterSourceHidden(bool hidden)
+    {
+        Application.runInBackground = true;
+        if (_windowManagerImplementation is KWinManager kwin)
+            return kwin.SetWindowMinimized(hidden);
+        return false;
     }
 
     public bool GetMouseButton(KeyCode button) // 0=left, 1=right, 2=middle
@@ -975,7 +1118,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     public RectInt GetMonitorRectFromWindow(IntPtr window = default)
     {
-        if (!GetWindowRect(window, out var winRect)) return new RectInt();
+        RectInt winRect;
+        if (IsNativeWaylandSession && (window==IntPtr.Zero || window==UnityWindow)) {
+            if (!TryGetVisiblePetRect(out var visible)) return new RectInt();
+            winRect=KWinManager.RoundRect(visible);
+        } else if (!GetWindowRect(window, out winRect)) return new RectInt();
     
         var center = new Vector2Int(winRect.x + winRect.width / 2, winRect.y + winRect.height / 2);
         var resultBasedOnWindowCenterPnt = GetMonitorRectFromPoint(center);
@@ -1022,6 +1169,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         if(_windowManagerImplementation != null)
             return _windowManagerImplementation.GetTotalDisplaySize();
+        if (IsNativeWaylandSession || _display == IntPtr.Zero || _unityWindow == IntPtr.Zero)
+            return new Vector2(Screen.currentResolution.width, Screen.currentResolution.height);
         XGetWindowAttributes(_display, _unityWindow, out var attr);
         return new Vector2(attr.width, attr.height);
     }
@@ -1169,6 +1318,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         rect = new RectInt();
         if(_windowManagerImplementation != null)
             return _windowManagerImplementation.GetWindowRect(window, out rect);
+        if (IsNativeWaylandSession || _display==IntPtr.Zero || window==IntPtr.Zero) return false;
         var result = XGetWindowAttributes(_display, window, out var attr);
         if (result == 0) return false;
 
@@ -1187,6 +1337,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 #if UNITY_EDITOR
         return;
 #endif
+        PresenterTopmost = topmost;
         if(_windowManagerImplementation != null)
         {
             _windowManagerImplementation.SetTopmost(topmost);
@@ -1230,6 +1381,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             _windowManagerImplementation.HideFromTaskbar(reallyHide);
             return;
         }
+        if (IsNativeWaylandSession || _display == IntPtr.Zero || _unityWindow == IntPtr.Zero)
+            return;
         if (_netWmState == IntPtr.Zero || _netWmStateSkipTaskbar == IntPtr.Zero)
             return;
 
@@ -1272,6 +1425,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         ChangeProperty(_motifHintsAtom, _motifHintsAtom, 32, PropModeReplace, hints, 5);
         XFlush(_display);
     }
+
     
     private void ChangeProperty<T>(IntPtr property, IntPtr type, int format, int mode, T data, int nelements)
     {
@@ -1292,6 +1446,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         if(_windowManagerImplementation != null)
         {
             _windowManagerImplementation.SetWindowType(type);
+            return;
+        }
+        if (IsNativeWaylandSession || _display == IntPtr.Zero || _unityWindow == IntPtr.Zero)
+        {
+            Debug.LogWarning($"Native Wayland window type request '{type}' ignored because KWin integration is unavailable.");
             return;
         }
         switch (type)

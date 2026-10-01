@@ -17,9 +17,9 @@ public class TouchInteractor : MonoBehaviour {
 
     void Update()
     {
-        if (Input.GetMouseButtonDown(0))
+        if (MateeInput.GetMouseButtonDown(0))
         {
-            menu.Open(Input.mousePosition);
+            menu.Open(MateeInput.MousePosition);
         }
     }
 }

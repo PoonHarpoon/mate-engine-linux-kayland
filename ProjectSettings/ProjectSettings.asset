@@ -835,11 +835,11 @@ PlayerSettings:
   m_MobileRenderingPath: 1
   metroPackageName: MateEngineX
   metroPackageVersion: 1.0.0.0
-  metroCertificatePath: Assets/WSATestCertificate.pfx
-  metroCertificatePassword: 
-  metroCertificateSubject: DefaultCompany
-  metroCertificateIssuer: DefaultCompany
-  metroCertificateNotAfter: 0000c3efd3a9dc01
+  metroCertificatePath:
+  metroCertificatePassword:
+  metroCertificateSubject:
+  metroCertificateIssuer:
+  metroCertificateNotAfter: 0000000000000000
   metroApplicationDescription: MateEngineX
   wsaImages:
     65636: Assets/ICONS/DevICON_50x50.png

@@ -1,4 +1,4 @@
-# Unity generated folders
+# Unity-generated project state
 [Ll]ibrary/
 [Tt]emp/
 [Oo]bj/
@@ -6,26 +6,50 @@
 [Bb]uilds/
 [Ll]ogs/
 [Mm]emoryCaptures/
+UserSettings/
+ProjectSettings/Packages/
+sysinfo.txt
+*.stacktrace
 
-# AI Source
+# Generated exports and recovery data
+AssetBundles/
+ExportedMods/
+Sync/
+UMotionData/AutoBackups/
+Assets/Sync/
+Assets/Sync.meta
+Assets/_Recovery/
+Assets/_Recovery.meta
+Assets/__DanceExportTemp__/
+Assets/__DanceExportTemp__.meta
+Assets/__ModExportTemp__/
+Assets/__ModExportTemp__.meta
+Assets/WSATestCertificate.pfx
+Assets/WSATestCertificate.pfx.meta
+Assets/RecoveredFromME/
+Assets/RecoveredFromME.meta
+
+# Thry editor-generated state and caches
+Thry/Config.json
+Thry/linked_materials.json
+Thry/preset_cache.txt
+Thry/presets_known_materials.txt
+
+# Local AI model payloads
 Assets/StreamingAssets/undreamai-v1.2.4-llamacpp/
+Assets/StreamingAssets/undreamai-v1.2.5-llamacpp/
 Assets/StreamingAssets/qwen2.5-1.5b-instruct-q4_k_m.gguf
 Assets/StreamingAssets/Qwen3-1.7B-Q4_K_M.gguf
 Assets/StreamingAssets/Qwen3-4B-Q2_K.gguf
 Assets/StreamingAssets/Qwen3-4B-Q4_K_M.gguf
-Assets/StreamingAssets/undreamai-v1.2.5-llamacpp
 
-# Test Models
-Assets/MATE ENGINE\ -\ Test\ Station
-Assets/ExportedModel
+# Local test assets
+/testModels/
+Assets/MATE ENGINE - Test Station/
+Assets/ExportedModel/
+Assets/Example Avatar - USED FOR MATE ENGINE/
 
-# Unity auto-generated files
-sysinfo.txt
-
-# Crash logs
-*.stacktrace
-
-# User-specific files
+# Unity and IDE-generated files
 *.user
 *.userprefs
 *.csproj
@@ -36,133 +60,33 @@ sysinfo.txt
 *.svd
 *.pidb
 *.booproj
-
-# Rider and VS Code
 .idea/
 .vscode/
+.vs/
 *.code-workspace
+UserSettings/Layouts/
 
-# Unity cache and packages
+# Generated packages and player builds
 *.apk
 *.unitypackage
-
-# Builds
 *.exe
 *.app
-*.apk
 *.x86
 *.x86_64
 *.aab
+_build/
 
-# MacOS system files
+# OS metadata
 .DS_Store
-
-# Windows system files
 Thumbs.db
 desktop.ini
 
-# Git-specific
-.gitattributes
-
-# Asset store tools
+# Unity services and asset-store tools
 Assets/AssetStoreTools*
-
-# Collaborate / Plastic SCM
 .collabignore
 .plastic/
-
-.vs
-Assets/Example Avatar - USED FOR MATE ENGINE
-ProjectSettings/Packages
-UserSettings/Layouts
 uWindowCapture.log
 
-# External native libraries - build them by yourself
-Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux/x86_64/
-# Unity generated folders
-[Ll]ibrary/
-[Tt]emp/
-[Oo]bj/
-[Bb]uild/
-[Bb]uilds/
-[Ll]ogs/
-[Mm]emoryCaptures/
-
-# AI Source
-Assets/StreamingAssets/undreamai-v1.2.4-llamacpp/
-Assets/StreamingAssets/qwen2.5-1.5b-instruct-q4_k_m.gguf
-Assets/StreamingAssets/Qwen3-1.7B-Q4_K_M.gguf
-Assets/StreamingAssets/Qwen3-4B-Q2_K.gguf
-Assets/StreamingAssets/Qwen3-4B-Q4_K_M.gguf
-Assets/StreamingAssets/undreamai-v1.2.5-llamacpp
-
-# Test Models
-Assets/MATE ENGINE\ -\ Test\ Station
-Assets/ExportedModel
-
-# Unity auto-generated files
-sysinfo.txt
-
-# Crash logs
-*.stacktrace
-
-# User-specific files
-*.user
-*.userprefs
-*.csproj
-*.unityproj
-*.sln
-*.suo
-*.tmp
-*.svd
-*.pidb
-*.booproj
-
-# Rider and VS Code
-.idea/
-.vscode/
-*.code-workspace
-
-# Unity cache and packages
-*.apk
-*.unitypackage
-
-# Builds
-*.exe
-*.app
-*.apk
-*.x86
-*.x86_64
-*.aab
-
-# MacOS system files
-.DS_Store
-
-# Windows system files
-Thumbs.db
-desktop.ini
-
-# Git-specific
-.gitattributes
-
-# Asset store tools
-Assets/AssetStoreTools*
-
-# Collaborate / Plastic SCM
-.collabignore
-.plastic/
-
-.vs
-Assets/Example Avatar - USED FOR MATE ENGINE
-ProjectSettings/Packages
-UserSettings/Layouts
-uWindowCapture.log
-
-# External native libraries - build them by yourself
-Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux/x86_64/
-Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux
-Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux/x86_64.meta
-
-Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux/x86_64.meta
-
-_build
+# Native file-browser output is built locally before the Unity build
+Assets/MATE ENGINE - Packages/StandaloneFileBrowser/Plugins/Linux/
+Assets/MATE ENGINE - Packages/StandaloneFileBrowser/Plugins/Linux.meta

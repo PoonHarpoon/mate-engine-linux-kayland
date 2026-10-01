@@ -10,6 +10,7 @@ using System.Reflection;
 using UniVRM10;
 using System;
 using Newtonsoft.Json;
+using Matee.AvatarControls;
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -53,6 +54,11 @@ public class VRMLoader : MonoBehaviour
         }
         if (!string.IsNullOrEmpty(savedPath))
             LoadVRM(savedPath);
+        else if (mainModel != null)
+        {
+            try { AvatarControlRuntime.Bind(AvatarControlScanner.Scan(mainModel, mainModel.name, true, null)); }
+            catch (Exception e) { Debug.LogError("[AvatarControls] Default avatar discovery failed: " + e); }
+        }
     }
     private void TryLoadRandomAvatar()
     {
@@ -148,7 +154,11 @@ public class VRMLoader : MonoBehaviour
             return;
         }
 
-        if (!File.Exists(path)) return;
+        if (!File.Exists(path))
+        {
+            AvatarControlRuntime.ReportError("Avatar file not found: " + path);
+            return;
+        }
 
         try
         {
@@ -199,10 +209,18 @@ public class VRMLoader : MonoBehaviour
                         importer?.Dispose();
                     }
                 }
-                catch { return; }
+                catch (Exception ex)
+                {
+                    AvatarControlRuntime.ReportError("VRM import failed for " + path + ": " + ex.Message);
+                    return;
+                }
             }
 
-            if (loadedModel == null) return;
+            if (loadedModel == null)
+            {
+                AvatarControlRuntime.ReportError("No VRM0 or VRM1 root was produced for " + path);
+                return;
+            }
 
             FinalizeLoadedModel(loadedModel, path);
             if (SaveLoadHandler.Instance != null)
@@ -213,7 +231,7 @@ public class VRMLoader : MonoBehaviour
         }
         catch (Exception ex)
         {
-            Debug.LogError("[VRMLoader] Failed to load model: " + ex.Message);
+            AvatarControlRuntime.ReportError("Failed to load model: " + ex.Message);
         }
     }
 
@@ -222,14 +240,14 @@ public class VRMLoader : MonoBehaviour
         var bundle = AssetBundle.LoadFromFile(path);
         if (bundle == null)
         {
-            Debug.LogError("[VRMLoader] Failed to load AssetBundle at: " + path);
+            AvatarControlRuntime.ReportError("Failed to load AssetBundle at: " + path);
             return;
         }
 
         var prefab = bundle.LoadAsset<GameObject>("__TempExport");
         if (prefab == null)
         {
-            Debug.LogError("[VRMLoader] No prefab found in AssetBundle.");
+            AvatarControlRuntime.ReportError("No avatar prefab found in AssetBundle: " + path);
             bundle.Unload(true);
             return;
         }
@@ -240,6 +258,8 @@ public class VRMLoader : MonoBehaviour
 
     private void FinalizeLoadedModel(GameObject loadedModel, string path, AssetBundle bundle = null)
     {
+        AvatarControlRuntime.Unbind();
+        var importedGltf = currentGltf != null && currentGltf.Root == loadedModel ? currentGltf : null;
         DisableMainModel();
         ClearPreviousCustomModel();
 
@@ -251,9 +271,21 @@ public class VRMLoader : MonoBehaviour
         loadedModel.transform.localScale = Vector3.one;
         currentModel = loadedModel;
 
-        EnableSkinnedMeshRenderers(currentModel);
+        if (importedGltf != null) importedGltf.ShowMeshes();
         AssignAnimatorController(currentModel);
         InjectComponentsFromPrefab(componentTemplatePrefab, currentModel);
+
+        try
+        {
+            var controls = AvatarControlScanner.Scan(currentModel, path, bundle != null, null);
+            AvatarControlRuntime.Bind(controls);
+        }
+        catch (Exception e)
+        {
+            AvatarControlRuntime.Unbind();
+            AvatarControlRuntime.ReportError("Discovery failed for " + path + ": " + e.Message);
+            Debug.LogException(e);
+        }
 
         var changer = FindFirstObjectByType<MEValueChanger>();
         if (changer != null)
@@ -382,12 +414,6 @@ public class VRMLoader : MonoBehaviour
             CleanupAllRawImagesInScene();
     }
 
-    private void EnableSkinnedMeshRenderers(GameObject model)
-    {
-        foreach (var skinnedMesh in model.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-            skinnedMesh.enabled = true;
-    }
-
     private void AssignAnimatorController(GameObject model)
     {
         var animator = model.GetComponentInChildren<Animator>();
@@ -467,8 +493,14 @@ public class VRMLoader : MonoBehaviour
 
     public void ActivateDefaultModel()
     {
+        AvatarControlRuntime.Unbind();
         ClearPreviousCustomModel(skipRawImageCleanup: true);
         EnableMainModel();
+        if (mainModel != null)
+        {
+            try { AvatarControlRuntime.Bind(AvatarControlScanner.Scan(mainModel, mainModel.name, true, null)); }
+            catch (Exception e) { Debug.LogError("[AvatarControls] Default avatar discovery failed: " + e); }
+        }
 
         if (SaveLoadHandler.Instance != null)
         {

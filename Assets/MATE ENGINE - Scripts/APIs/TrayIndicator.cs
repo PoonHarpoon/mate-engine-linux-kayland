@@ -60,6 +60,7 @@ public class TrayIndicator : MonoBehaviour
     private static extern void app_indicator_set_icon_full(IntPtr indicator, string icon_name, string icon_desc);
 
     private IntPtr indicatorHandle;
+    private bool unavailable;
     private Gtk.Menu menu;
     private List<GCHandle> delegateHandles = new();
     
@@ -87,11 +88,16 @@ public class TrayIndicator : MonoBehaviour
         }
     }
     
-    public void InitializeTrayIcon(string iconName)
+    public bool InitializeTrayIcon(string iconName)
     {
 #if  UNITY_EDITOR
-        return;
+        return false;
 #endif
+        if (unavailable)
+            return false;
+
+        try
+        {
         // Create the indicator with a unique ID, normal icon name (use a theme icon like "applications-system"), and category
         indicatorHandle =
             app_indicator_new(iconName, "applications-system", AppIndicatorCategory.ApplicationStatus);
@@ -99,7 +105,8 @@ public class TrayIndicator : MonoBehaviour
         if (indicatorHandle == IntPtr.Zero)
         {
             Debug.LogError("Failed to create AppIndicator");
-            return;
+            unavailable = true;
+            return false;
         }
 
         // Set to active status with normal icon
@@ -110,6 +117,14 @@ public class TrayIndicator : MonoBehaviour
 #else
         app_indicator_set_icon_full(indicatorHandle, Application.dataPath + "/Resources/UnityPlayer.png", Application.productName);
 #endif
+        return true;
+        }
+        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException)
+        {
+            unavailable = true;
+            Debug.LogWarning($"System tray integration is unavailable: {exception.Message}");
+            return false;
+        }
     }
 
     public void AddMenuItem(List<TrayMenuEntry> menuEntries)

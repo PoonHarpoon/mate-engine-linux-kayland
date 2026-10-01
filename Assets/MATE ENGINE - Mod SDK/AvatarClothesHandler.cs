@@ -1,6 +1,7 @@
 ﻿using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using Matee.AvatarControls;
 
 public class AvatarClothesHandler : MonoBehaviour
 {
@@ -26,6 +27,9 @@ public class AvatarClothesHandler : MonoBehaviour
 
     void Start()
     {
+        var controls = FindFirstObjectByType<AvatarControlPanel>();
+        if (controls == null) controls = gameObject.AddComponent<AvatarControlPanel>();
+        controls.EntryPanel = menuPanel;
         if (menuPanel != null)
         {
             menuPanel.SetActive(false);
@@ -131,6 +135,7 @@ public class AvatarClothesHandler : MonoBehaviour
                 outfitButtons[i].onClick.AddListener(() =>
                 {
                     ActivateOutfit(clothesComponent, clothesType, index);
+                    AvatarControlRuntime.SyncAuthoredClothing();
                     PlayClothesClickSound();
                 });
 

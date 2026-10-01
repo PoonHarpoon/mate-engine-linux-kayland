@@ -1,5 +1,4 @@
 ﻿using UnityEngine;
-using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -29,13 +28,12 @@ public class AvatarBigScreenHandler : MonoBehaviour
     [Header("Canvas Blocking")]
     public GameObject moveCanvas;
 
-    private IntPtr unityWindow = IntPtr.Zero;
     private bool isBigScreenActive = false;
     private Vector3 originalCamPos;
     private Quaternion originalCamRot;
     private float originalFOV;
     private float originalOrthoSize;
-    private RectInt originalWindowRect;
+    private Rect originalVisibleRect;
     private bool originalRectSet = false;
     private Transform bone;
     private AvatarAnimatorController avatarAnimatorController;
@@ -69,10 +67,6 @@ public class AvatarBigScreenHandler : MonoBehaviour
 
     void Start()
     {
-        if (WindowManager.Instance != null)
-        {
-            unityWindow = WindowManager.Instance.UnityWindow;
-        }
         if (MainCamera == null) MainCamera = Camera.main;
         if (avatarAnimator == null) avatarAnimator = GetComponent<Animator>();
         if (MainCamera != null)
@@ -82,9 +76,9 @@ public class AvatarBigScreenHandler : MonoBehaviour
             originalFOV = MainCamera.fieldOfView;
             originalOrthoSize = MainCamera.orthographicSize;
         }
-        if (unityWindow != IntPtr.Zero && WindowManager.Instance.GetWindowRect(unityWindow, out RectInt r))
+        if (WindowManager.Instance != null && WindowManager.Instance.TryGetVisiblePetRect(out Rect r))
         {
-            originalWindowRect = r;
+            originalVisibleRect = r;
             originalRectSet = true;
         }
         avatarAnimatorController = GetComponent<AvatarAnimatorController>();
@@ -118,6 +112,7 @@ public class AvatarBigScreenHandler : MonoBehaviour
         float buffer = 1.4f;
 
         Vector3 camPos = originalCamPos;
+        camPos.x = headPos.x;
         camPos.y = headPos.y + YOffset * scale;
         MainCamera.transform.position = camPos;
         MainCamera.transform.rotation = Quaternion.identity;
@@ -187,6 +182,8 @@ public class AvatarBigScreenHandler : MonoBehaviour
         float fadeY = baseY + FadeYOffset;
 
         Vector3 camPos = MainCamera.transform.position;
+        float fromX = camPos.x;
+        float toX = fadeIn ? headPos.x : originalCamPos.x;
         float fromY = fadeIn ? fadeY : baseY;
         float toY = fadeIn ? baseY : fadeY;
         float duration = fadeIn ? FadeInDuration : FadeOutDuration;
@@ -199,6 +196,7 @@ public class AvatarBigScreenHandler : MonoBehaviour
         while (time < duration)
         {
             float curve = Mathf.SmoothStep(0, 1, time / duration);
+            camPos.x = Mathf.Lerp(fromX, toX, curve);
             camPos.y = Mathf.Lerp(fromY, toY, curve);
             MainCamera.transform.position = camPos;
             MainCamera.transform.rotation = Quaternion.identity;
@@ -222,6 +220,7 @@ public class AvatarBigScreenHandler : MonoBehaviour
             yield return null;
         }
 
+        camPos.x = toX;
         camPos.y = toY;
         MainCamera.transform.position = camPos;
         MainCamera.transform.rotation = Quaternion.identity;
@@ -249,10 +248,9 @@ public class AvatarBigScreenHandler : MonoBehaviour
             if (avatarAnimator != null) avatarAnimator.SetBool(IsBigScreen, false);
             if (avatarAnimatorController != null) avatarAnimatorController.BlockDraggingOverride = false;
             if (moveCanvas != null && moveCanvasWasActive) moveCanvas.SetActive(true);
-            if (unityWindow != IntPtr.Zero && originalRectSet)
+            if (WindowManager.Instance != null && originalRectSet)
             {
-                WindowManager.Instance.SetWindowPosition(originalWindowRect.position);
-                WindowManager.Instance.SetWindowSize(new Vector2Int(originalWindowRect.width, originalWindowRect.height));
+                WindowManager.Instance.SetVisiblePetPosition(originalVisibleRect.position);
             }
             if (MainCamera != null)
             {
@@ -264,22 +262,34 @@ public class AvatarBigScreenHandler : MonoBehaviour
         }
     }
     
-    private RectInt FindBestMonitorRect(RectInt windowRect)
+    private RectInt FindBestMonitorRect(Rect visibleRect, Vector2 modelPosition)
     {
         if (WindowManager.Instance == null) return new RectInt(0, 0, Screen.currentResolution.width, Screen.currentResolution.height);
-        
+        WindowManager.Instance.QueryMonitors();
         List<RectInt> monitorRects = WindowManager.Instance.GetAllMonitors().Values.ToList();
+        if (monitorRects.Count == 0) return new RectInt(0, 0, Screen.currentResolution.width, Screen.currentResolution.height);
+        foreach (var monitor in monitorRects)
+            if (monitor.Contains(Vector2Int.FloorToInt(modelPosition))) return monitor;
         int idx = 0;
         float maxArea = 0;
         for (int i = 0; i < monitorRects.Count; i++)
         {
-            float overlap = OverlapArea(windowRect, monitorRects[i]);
+            float overlap = OverlapArea(visibleRect, monitorRects[i]);
             if (overlap > maxArea) { idx = i; maxArea = overlap; }
         }
-        return new(new((monitorRects[idx].x + monitorRects[idx].width) / 2 - windowRect.width / 2, (monitorRects[idx].y + monitorRects[idx].height) / 2 - windowRect.height / 2), monitorRects[idx].size);
+        if (maxArea == 0)
+        {
+            float nearest = float.MaxValue;
+            for (int i = 0; i < monitorRects.Count; i++)
+            {
+                float distance = (visibleRect.center - (Vector2)monitorRects[i].center).sqrMagnitude;
+                if (distance < nearest) { nearest = distance; idx = i; }
+            }
+        }
+        return monitorRects[idx];
     }
 
-    float OverlapArea(RectInt a, RectInt b)
+    float OverlapArea(Rect a, RectInt b)
     {
         float x1 = Mathf.Max(a.x, b.x), x2 = Mathf.Min(a.x + a.width, b.x + b.width);
         float y1 = Mathf.Max(a.y, b.y), y2 = Mathf.Min(a.y + a.height, b.y + b.height);
@@ -295,6 +305,7 @@ public class AvatarBigScreenHandler : MonoBehaviour
 
         var scale = avatarAnimator.transform.lossyScale.y;
         var headPos = bone.position;
+        Vector3 modelScreenPosition = MainCamera.WorldToScreenPoint(headPos);
         float baseY = headPos.y + YOffset * scale;
         float fadeY = baseY + FadeYOffset;
 
@@ -313,13 +324,17 @@ public class AvatarBigScreenHandler : MonoBehaviour
         camPos.y = toY;
         MainCamera.transform.position = camPos;
 
-        if (toFadeY && unityWindow != IntPtr.Zero)
+        if (toFadeY && WindowManager.Instance != null)
         {
-            if (WindowManager.Instance.GetWindowRect(unityWindow, out RectInt windowRect))
+            if (WindowManager.Instance.TryGetVisiblePetRect(out Rect visibleRect))
             {
-                RectInt targetScreen = FindBestMonitorRect(windowRect);
-                WindowManager.Instance.SetWindowPosition(targetScreen.x, targetScreen.height - windowRect.height);
-                originalWindowRect = windowRect;
+                Vector2 modelPosition = new Vector2(
+                    visibleRect.xMin + modelScreenPosition.x * visibleRect.width / Mathf.Max(1, Screen.width),
+                    visibleRect.yMax - modelScreenPosition.y * visibleRect.height / Mathf.Max(1, Screen.height));
+                RectInt targetScreen = FindBestMonitorRect(visibleRect, modelPosition);
+                float x = targetScreen.center.x - visibleRect.width * 0.5f;
+                WindowManager.Instance.SetVisiblePetPosition(new Vector2(x, targetScreen.yMax - visibleRect.height));
+                originalVisibleRect = visibleRect;
                 originalRectSet = true;
             }
         }

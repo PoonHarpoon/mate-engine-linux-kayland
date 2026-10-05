@@ -13,11 +13,6 @@ Its focus is native Wayland integration with KDE's KWin compositor.
 
 ## Known issues: read before installing
 
-> [!WARNING]
-> **The startup logo and splash screen are very buggy and visually broken.**
-> A fix is unlikely anytime soon. Expect this rough edge during startup, even
-> though normal desktop companion behavior is working.
-
 - **Mods do not load correctly.**
 - **Avatar controls depend on model naming and structure.** Automatic detection
   can be wrong; use Setup to rename or recategorize controls. Material and spring
@@ -88,40 +83,16 @@ directory, outside the model file.
 | Other Wayland compositors | Unsupported; desktop integration currently depends on KWin backend, don't expect it to even render, |
 | X11 / XWayland | Outside this fork's scope; use the source project for x11, this fork is for specifically wayland support |
 
-The development baseline uses Arch Linux and Unity `6000.2.6f2`. Earlier
-functional checks used a VM with KWin 6.7.5 and software rendering; those checks
-are separate from the confirmed KDE6 multi-monitor setup. Support does not imply
-that every GPU, monitor layout, or distribution has been tested.
-
-## Download v0.1
-
-The `v0.1` release contains the source snapshot and the x86-64 Linux AppImage.
-Download the AppImage from [Releases](https://github.com/PoonHarpoon/mate-engine-linux-kayland/releases/tag/v0.1),
-make it executable, and run it from a KDE Plasma 6 Wayland session:
-
-```sh
-chmod +x MateEngine-Linux-Wayland-v0.1-x86_64.AppImage
-./MateEngine-Linux-Wayland-v0.1-x86_64.AppImage -force-glcore
-```
-
-The package includes CPU-selected implementations and is not AVX-512-only.
-It still requires compatible host libraries, graphics drivers, and FUSE support.
-See the release notes for tested scope and runtime requirements.
+The development baseline uses Arch Linux and Unity `6000.2.6f2`.
 
 ## Build and run
 
 You need KDE Plasma 6 in a Wayland session, KWin layer-shell support, and
-Determinate Nix with flakes enabled. The pinned development environment supplies
-Unity `6000.2.6f2` and the native build dependencies. Unity license activation
-requires your own Unity account and remains outside the reproducible build.
+Nix with flakes enabled. The pinned development environment supplies
+Unity `6000.2.6f2` and the native build dependencies. `build.sh` runs Unity in
+batch mode, so it needs no Unity account, Unity Hub, or license activation.
 
-If you need to activate a license, launch Unity Hub:
-
-```sh
-nix run .#unityhub
-```
-
-Then, from the repository root:
+From the repository root:
 
 ```sh
 nix develop
@@ -138,6 +109,41 @@ The build compiles the `StandaloneFileBrowser` native plugin from source, builds
 the Unity player, and packages the native Wayland presenter. Use `launch.sh` to
 start the player: it selects native Wayland and starts the presenter. Confirm
 `Selected window backend: wayland` in the Unity player log.
+
+`build.sh` needs a graphical session and GPU access from inside Nix, because
+Unity must have a graphics device while building; without one, the player shows
+a broken splash screen. The pinned environment bundles Mesa, which covers AMD
+and Intel GPUs. On other drivers, such as NVIDIA's proprietary driver, run the
+build through [nixGL](https://github.com/nix-community/nixGL) (for example
+`nixGL ./build.sh ./Build`); `build.sh` warns when Unity found no GPU. On a
+machine without a display, `MATEENGINE_BUILD_HEADLESS=1 ./build.sh ./Build`
+still builds for quick iteration, but don't publish the result.
+
+### Building from the Editor
+
+You can also build from the Unity Editor GUI. Unlike `build.sh`, the Editor
+requires signing in to your own Unity account and activating a license (Unity
+Personal is enough) through Unity Hub:
+
+```sh
+nix run .#unityhub
+```
+
+Then open the project:
+
+```sh
+nix develop
+./scripts/build-file-browser.sh
+./scripts/prepare-llamalib.sh
+unity -projectPath "$PWD"
+```
+
+Choose **MateEngine > Build Linux Player...**, select the `Build` folder, and
+then package the native Wayland presenter:
+
+```sh
+./scripts/package-build.sh ./Build
+```
 
 Source-project packages do not contain this fork's native Wayland integration.
 See [usage.md](usage.md) for build options, Editor launch, runtime requirements,

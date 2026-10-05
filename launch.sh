@@ -60,7 +60,16 @@ presenter_pid=$!
 export MATEENGINE_PRESENTER_PID="$presenter_pid"
 export MATEENGINE_PRESENTER_FRAME_FILE="$frame_file"
 export MATEENGINE_PRESENTER_INPUT_FILE="$input_file"
-"$binary" -force-wayland "$@" &
+# Transparency relies on SDL's EGL alpha path, so request OpenGL Core unless
+# the caller chose a graphics API; Unity would otherwise default to Vulkan and
+# present an opaque window.
+graphics_args=(-force-glcore)
+for arg in "$@"; do
+    case "$arg" in
+        -force-glcore*|-force-vulkan|-force-gles*|-force-opengl) graphics_args=() ;;
+    esac
+done
+"$binary" -force-wayland "${graphics_args[@]}" "$@" &
 player_pid=$!
 if wait "$player_pid"; then status=0; else status=$?; fi
 player_pid=""

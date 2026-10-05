@@ -9,9 +9,10 @@ and pointer position back to Unity.
 ## Requirements
 
 - KDE Plasma 6 in a Wayland session
-- Determinate Nix with flakes enabled
-- A Unity Personal or other suitable Unity license activated for Unity
-  `6000.2.6f2`
+- Nix with flakes enabled
+- For the Unity Editor GUI only: a Unity account with a Unity Personal or other
+  suitable license activated for Unity `6000.2.6f2`. `build.sh` needs no
+  account or license.
 
 Check the session before launching:
 
@@ -24,7 +25,8 @@ printf 'session=%s wayland=%s display=%s\n' \
 
 ## Build a player
 
-Enter the pinned development environment and build to a local output directory:
+From a graphical session, enter the pinned development environment and build to
+a local output directory:
 
 ```sh
 nix develop
@@ -34,7 +36,49 @@ nix develop
 The first `nix develop` downloads the pinned Unity Editor and native build
 dependencies. `build.sh` builds the reviewed StandaloneFileBrowser plugin, runs
 Unity in batch mode, builds the native presenter, and places the presenter next
-to `Build/MateEngineX.x86_64`.
+to `Build/MateEngineX.x86_64`. Batch mode needs no Unity account, Unity Hub, or
+license activation.
+
+To rebuild, run `./build.sh ./Build` again. It overwrites the player in place
+and reuses the `Library/` cache. Re-export any portable copy afterwards.
+
+`build.sh` runs Unity in batch mode with a graphics device. Building with
+`-nographics`, or without GPU access, produces player data that renders a
+broken splash screen, so a display and a working GPU are required for builds
+you publish. The pinned Unity environment bundles Mesa for AMD and Intel GPUs.
+Other drivers, such as NVIDIA's proprietary driver, need host graphics exposed
+to Nix through [nixGL](https://github.com/nix-community/nixGL), for example
+`nixGL ./build.sh ./Build`. `build.sh` prints a warning when the Unity log shows
+that no GPU was available (`NullGfxDevice`). On a machine without one,
+`MATEENGINE_BUILD_HEADLESS=1` restores the `-nographics` build for quick
+iteration; `build.sh` then prints a warning, and the result should not be
+published.
+
+LLMUnity downloads its LlamaLib runtime into `Assets/StreamingAssets` on
+every Editor start unless it finds its completion marker, and its own pre-build
+step removes that marker. `build.sh` runs `scripts/prepare-llamalib.sh` to
+restore the marker when the Linux libraries are already present, so builds stay
+offline and bundle only the Linux libraries. The first build on a fresh
+checkout still downloads LlamaLib; if `build.sh` then warns that the player
+bundles non-Linux files, run it again.
+
+To build from the Unity Editor GUI instead, first sign in and activate a license
+with `nix run .#unityhub`, which the Editor requires, then build the plugin and
+open the project:
+
+```sh
+nix develop
+./scripts/build-file-browser.sh
+./scripts/prepare-llamalib.sh
+unity -projectPath "$PWD"
+```
+
+Choose **MateEngine > Build Linux Player...** and select `Build`. The menu uses
+the same scene and build options as `build.sh`. Then package the presenter:
+
+```sh
+./scripts/package-build.sh ./Build
+```
 
 To prepare a copyable player directory intended to run without Nix on the
 destination machine, run:
@@ -67,6 +111,9 @@ MATEENGINE_JOB_WORKER_COUNT=8 ./build.sh ./Build
 
 # Use an explicitly installed matching Unity Editor.
 UNITY_EDITOR_PATH=/absolute/path/to/Unity ./build.sh ./Build
+
+# Build without a graphics device (broken splash screen; don't publish).
+MATEENGINE_BUILD_HEADLESS=1 ./build.sh ./Build
 
 # Put the Unity batch-build log somewhere else.
 MATEENGINE_BUILD_LOG=/tmp/matee-build.log ./build.sh ./Build
@@ -102,7 +149,10 @@ env -u DISPLAY \
 
 The launcher creates a private transport directory under `XDG_RUNTIME_DIR`,
 starts the presenter with Qt's Wayland backend, and starts Unity with
-`-force-wayland`. It also enables SDL's alpha-buffer transparency hint. The
+`-force-wayland`. It also enables SDL's alpha-buffer transparency hint and
+requests OpenGL Core (`-force-glcore`), because that hint only applies to EGL;
+under Vulkan the window is opaque. Passing your own `-force-vulkan`,
+`-force-glcore`, or `-force-gles*` argument overrides that default. The
 temporary transport is removed when the player exits.
 
 The presenter targets 60 captured frames per second by default. Lower values
@@ -167,6 +217,11 @@ activation, not for selecting a different Editor version:
 nix run .#unityhub
 ```
 
+If the splash screen is broken, the player was probably built without a
+graphics device (`-nographics`, `MATEENGINE_BUILD_HEADLESS=1`, or no GPU access
+inside Nix). Check the build output for the GPU warning, then rebuild from a
+graphical session with plain `./build.sh`, using nixGL if needed.
+
 If the model is upside down, retain `Player.log` and check the logged graphics
 API and vertical-flip decision. If animation is choppy, compare the default 60
 FPS with `MATEENGINE_PRESENTER_FPS=30` while recording the GPU, driver, monitor
@@ -196,7 +251,7 @@ Plasma and KWin versions, graphics API and renderer, monitor layout and scaling,
 the three display environment variables shown above, and the relevant Unity and
 presenter logs. Multi-monitor, fractional-scaling, HDR, and physical-GPU results
 must be reported as tested on the actual configuration rather than inferred from
-the development VM.
+a different setup.
 # Portable file-browser dependencies
 
 Build with `MATEENGINE_PORTABLE_PLUGIN=1 ./build.sh <output>` inside the pinned
